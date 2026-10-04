@@ -1,8 +1,9 @@
 (() => {
   // The page is never touched: no padding, no layout reservation, no cursor
-  // tracking. A small pull tab (top-left by default) toggles the toolbar via
-  // click, and can be grabbed and slid along the top area - the position is
-  // remembered. The bar closes via its ✕, an outside click, or Escape.
+  // tracking. One small pull tab does everything: click to open the toolbar,
+  // click again to close it. While the bar is open the tab hangs from its
+  // bottom edge, so the button never moves away. The tab can be grabbed and
+  // slid along the top area - the position is remembered.
   const setupToolbarToggle = () => {
     const toolbar = document.getElementById('yubikiri-proxy-toolbar');
     const toggle = document.getElementById('yubikiri-proxy-toggle');
@@ -12,34 +13,51 @@
     const POS_KEY = 'yubikiri-toggle-pos';
     const TOP_LIMIT = 60;
     const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+    const isOpen = () => root.classList.contains('yubikiri-bar-open');
 
-    let drag = null;        // {id, dx, dy, startLeft, startTop, moved}
+    let drag = null;          // {id, dx, dy, startLeft, startTop, moved, open}
     let suppressClick = false;
+    let pos = { l: 0, t: 0 }; // 閉じているときの居座り位置
 
-    const applyPosition = (left, top) => {
-      toggle.style.left = clamp(left, 0, window.innerWidth - toggle.offsetWidth) + 'px';
-      toggle.style.top = clamp(top, 0, TOP_LIMIT) + 'px';
+    const place = (left, top) => {
+      toggle.style.left = Math.round(left) + 'px';
+      toggle.style.top = Math.round(top) + 'px';
+    };
+    const placeClosed = () => {
+      pos.l = clamp(pos.l, 0, window.innerWidth - toggle.offsetWidth);
+      pos.t = clamp(pos.t, 0, TOP_LIMIT);
+      place(pos.l, pos.t);
+    };
+    // 開いているときはバーの下端に吸着させる。offsetHeight は transform の
+    // アニメーション中でも確定したレイアウト上の高さを返す
+    const placeOpen = () => {
+      place(clamp(pos.l, 0, window.innerWidth - toggle.offsetWidth), toolbar.offsetHeight);
+    };
+    const syncToggle = () => {
+      const open = isOpen();
+      toggle.textContent = open ? '▴' : '▾';
+      const label = open ? 'Yubikiri Proxyのバーを閉じる' : 'Yubikiri Proxyのバーを開く';
+      toggle.setAttribute('aria-label', label);
+      toggle.setAttribute('title', label);
+      toggle.setAttribute('aria-expanded', String(open));
+      if (open) placeOpen(); else placeClosed();
     };
 
     // 居座り位置の復元（無ければ左はじの既定位置）
     try {
       const saved = JSON.parse(localStorage.getItem(POS_KEY) || 'null');
-      if (saved && Number.isFinite(saved.l) && Number.isFinite(saved.t)) applyPosition(saved.l, saved.t);
+      if (saved && Number.isFinite(saved.l) && Number.isFinite(saved.t)) pos = { l: saved.l, t: saved.t };
     } catch {}
+    syncToggle();
 
-    const close = () => {
-      root.classList.remove('yubikiri-bar-open');
-      toggle.setAttribute('aria-expanded', 'false');
-    };
-    const open = () => {
-      root.classList.add('yubikiri-bar-open');
-      toggle.setAttribute('aria-expanded', 'true');
-    };
+    const close = () => { root.classList.remove('yubikiri-bar-open'); syncToggle(); };
+    const open = () => { root.classList.add('yubikiri-bar-open'); syncToggle(); };
 
     toggle.addEventListener('pointerdown', (event) => {
       if (event.button !== 0) return;
       const rect = toggle.getBoundingClientRect();
-      drag = { id: event.pointerId, dx: event.clientX - rect.left, dy: event.clientY - rect.top, startLeft: rect.left, startTop: rect.top, moved: false };
+      drag = { id: event.pointerId, dx: event.clientX - rect.left, dy: event.clientY - rect.top, startLeft: rect.left, startTop: rect.top, moved: false, open: isOpen() };
+      toggle.classList.add('yubikiri-toggle-dragging');
       toggle.setPointerCapture(event.pointerId);
       event.preventDefault();
     });
@@ -48,37 +66,42 @@
       const left = event.clientX - drag.dx;
       const top = event.clientY - drag.dy;
       if (!drag.moved && (Math.abs(left - drag.startLeft) > 3 || Math.abs(top - drag.startTop) > 3)) drag.moved = true;
-      if (drag.moved) {
-        applyPosition(left, top);
-        suppressClick = true;
+      if (!drag.moved) return;
+      pos.l = clamp(left, 0, window.innerWidth - toggle.offsetWidth);
+      if (drag.open) placeOpen();
+      else {
+        pos.t = clamp(top, 0, TOP_LIMIT);
+        place(pos.l, pos.t);
       }
+      suppressClick = true;
     });
     const endDrag = (event) => {
       if (!drag || event.pointerId !== drag.id) return;
-      if (drag.moved) {
-        try { localStorage.setItem(POS_KEY, JSON.stringify({ l: parseFloat(toggle.style.left), t: parseFloat(toggle.style.top) })); } catch {}
+      const moved = drag.moved;
+      drag = null;
+      toggle.classList.remove('yubikiri-toggle-dragging');
+      if (moved) {
+        try { localStorage.setItem(POS_KEY, JSON.stringify({ l: pos.l, t: pos.t })); } catch {}
         window.setTimeout(() => { suppressClick = false; }, 0);
       }
-      drag = null;
     };
     toggle.addEventListener('pointerup', endDrag);
     toggle.addEventListener('pointercancel', endDrag);
 
     toggle.addEventListener('click', () => {
       if (suppressClick) { suppressClick = false; return; }
-      if (root.classList.contains('yubikiri-bar-open')) close();
+      if (isOpen()) close();
       else open();
     });
-    const closeButton = toolbar.querySelector('.yubikiri-bar-close');
-    if (closeButton) closeButton.addEventListener('click', close);
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && root.classList.contains('yubikiri-bar-open')) close();
+      if (event.key === 'Escape' && isOpen()) close();
     });
     document.addEventListener('click', (event) => {
-      if (!root.classList.contains('yubikiri-bar-open')) return;
+      if (!isOpen()) return;
       if (toolbar.contains(event.target) || toggle.contains(event.target)) return;
       close();
     });
+    window.addEventListener('resize', () => { if (isOpen()) placeOpen(); else placeClosed(); });
   };
 
   setupToolbarToggle();

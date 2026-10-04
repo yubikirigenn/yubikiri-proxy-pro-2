@@ -22,9 +22,10 @@ html.yubikiri-bar-open #yubikiri-proxy-toolbar {
   opacity: 1;
 }
 
-/* Small pull tab at the top-left edge. The only way to open the bar - no
-   cursor tracking, no layout reservation, the page is never touched.
-   Grab it to slide it along the top (clamped by app.js). */
+/* Small pull tab. The only control for the bar: click to open, click again
+   to close. While the bar is open the tab hangs from its bottom edge, so the
+   button never moves away. Grab it to slide it along the top (clamped by
+   app.js). */
 #yubikiri-proxy-toggle {
   position: fixed;
   z-index: 2147483646;
@@ -42,26 +43,22 @@ html.yubikiri-bar-open #yubikiri-proxy-toolbar {
   place-items: center;
   padding: 0;
   font: 10px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  transition: left .18s ease, top .18s ease, background-color .15s ease, color .15s ease;
 }
 
 #yubikiri-proxy-toggle:hover { background: rgb(70 70 70 / 70%); color: #fff; }
 #yubikiri-proxy-toggle:active { cursor: grabbing; }
+#yubikiri-proxy-toggle.yubikiri-toggle-dragging { transition: none; }
 
-html.yubikiri-bar-open #yubikiri-proxy-toggle { display: none; }
-
-#yubikiri-proxy-toolbar .yubikiri-bar-close {
-  flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
-  border: 0;
-  border-radius: 6px;
-  background: rgb(255 255 255 / 8%);
-  color: #fff;
-  cursor: pointer;
-  font: inherit;
+html.yubikiri-bar-open #yubikiri-proxy-toggle {
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+  background: #232323;
+  color: rgb(255 255 255 / 76%);
 }
 
-#yubikiri-proxy-toolbar .yubikiri-bar-close:hover { background: rgb(255 255 255 / 20%); }
+html.yubikiri-bar-open #yubikiri-proxy-toggle:hover { background: #2d2d2d; color: #fff; }
 
 #yubikiri-proxy-toolbar a {
   flex: 0 0 auto;
