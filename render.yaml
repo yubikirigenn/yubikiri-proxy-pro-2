@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: yubikiri-proxy-pro-2
+    runtime: node
+    region: singapore
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: NODE_ENV
+        value: production
+      # PCエージェントとの共有シークレット（8文字以上のランダム値）。
+      # 未設定でもサーバーは直接取得のみで動作する。
+      - key: AGENT_SECRET
+        sync: false

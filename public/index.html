@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#1d1d1f">
+    <title>Yubikiri Proxy</title>
+    <link rel="stylesheet" href="/assets/app.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body class="home-page">
+    <main class="home-content">
+      <h1 class="wordmark">Yubikiri Proxy</h1>
+      <form class="url-form" data-proxy-form action="/api/navigate" method="get">
+        <label class="visually-hidden" for="home-url">URL</label>
+        <input id="home-url" name="url" type="text" inputmode="url" autocomplete="url" placeholder="URLを入力..." spellcheck="false" autocapitalize="off" required autofocus>
+        <button type="submit" aria-label="ページを開く">
+          <span>Go</span>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11m-4-4 4 4-4 4" /></svg>
+        </button>
+      </form>
+      <p class="form-error" data-form-error role="status" aria-live="polite"></p>
+    </main>
+    <span class="version">Beta 1</span>
+  </body>
+</html>
