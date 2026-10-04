@@ -172,18 +172,20 @@ function rewriteSrcset(value, baseUrl) {
   while (cursor < value.length) {
     while (cursor < value.length && /[\s,]/.test(value[cursor])) cursor++;
     if (cursor >= value.length) break;
-    let start = cursor;
+    const start = cursor;
     while (cursor < value.length && !/\s/.test(value[cursor])) cursor++;
-    let url = value.slice(start, cursor);
-    let comma = '';
-    if (url.endsWith(',')) { url = url.slice(0, -1); comma = ','; }
+    const raw = value.slice(start, cursor);
+    // `url,` means "no descriptor, entry separator follows" (Apple uses this
+    // form). Keep the descriptor-less entry and let the join add one comma;
+    // re-emitting the trailing comma here produced `url,, ` and broke <picture>.
+    const url = raw.endsWith(',') ? raw.slice(0, -1) : raw;
     let descriptor = '';
-    if (!comma) {
-      start = cursor;
+    if (!raw.endsWith(',')) {
+      const from = cursor;
       while (cursor < value.length && value[cursor] !== ',') cursor++;
-      descriptor = value.slice(start, cursor).trim();
+      descriptor = value.slice(from, cursor).trim();
     }
-    parts.push(`${urlForPage(url, baseUrl)}${descriptor ? ` ${descriptor}` : ''}${comma}`);
+    parts.push(`${urlForPage(url, baseUrl)}${descriptor ? ` ${descriptor}` : ''}`);
     if (value[cursor] === ',') cursor++;
   }
   return parts.join(', ');
@@ -477,12 +479,8 @@ function looksLikeResourceUrl(value) {
     || /^[^/]+\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico|css|js|mjs|mp4|webm|ogv|mp3|wav|woff2?|ttf|otf|eot|json|vtt|pdf)(?:[?#]|$)/i.test(value);
 }
 
-function rewriteHtml(source, target, token) {
-  const $ = cheerio.load(source, { decodeEntities: false });
-  $('base').remove();
-  $('meta[http-equiv="content-security-policy" i], meta[http-equiv="content-security-policy-report-only" i]').remove();
-  if (!$('head').length) $('html').prepend('<head></head>');
-
+// Attribute/CSS rewriting shared by whole documents and noscript fragments.
+function rewriteHtmlTree($, target) {
   const attributes = [
     ['a[href],area[href],link[href]', 'href'],
     ['img[src],script[src],iframe[src],frame[src],embed[src],source[src],audio[src],video[src],track[src],input[src]', 'src'],
@@ -523,6 +521,26 @@ function rewriteHtml(source, target, token) {
     $(element).attr('content', content.replace(/(url\s*=\s*)(["']?)([^"';]+)\2/i, (_match, prefix, quote, value) => `${prefix}${quote}${urlForPage(value.trim(), target)}${quote}`));
   });
   $('[integrity]').removeAttr('integrity');
+}
+
+function rewriteHtml(source, target, token) {
+  const $ = cheerio.load(source, { decodeEntities: false });
+  $('base').remove();
+  $('meta[http-equiv="content-security-policy" i], meta[http-equiv="content-security-policy-report-only" i]').remove();
+  if (!$('head').length) $('html').prepend('<head></head>');
+
+  rewriteHtmlTree($, target);
+
+  // parse5 keeps <noscript> content as raw text, so the tree pass above never
+  // sees it. Lazy-load frameworks copy these URLs into the live DOM at runtime
+  // (Apple's homepage does), so rewrite the stored markup as well.
+  $('noscript').each((_index, element) => {
+    const raw = $(element).html();
+    if (!raw || !/<[a-z]/i.test(raw)) return;
+    const nested = cheerio.load(raw, { decodeEntities: false });
+    rewriteHtmlTree(nested, target);
+    $(element).text(nested.html());
+  });
 
   const directory = new URL('.', target).pathname;
   const toolbar = $('<div id="yubikiri-proxy-toolbar"></div>');
