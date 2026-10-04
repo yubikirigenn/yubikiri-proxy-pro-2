@@ -107,6 +107,11 @@ html.yubikiri-bar-visible #yubikiri-proxy-toolbar { transform: translateY(0); op
 
 html.yubikiri-bar-visible #yubikiri-proxy-grip { display: none; }
 
+/* While the toolbar is open, top-pinned fixed/sticky elements (site headers
+   pinned at top:0) are shifted below it so they stay visible and clickable.
+   app.js adds the class only to elements detected at the very top. */
+.yubikiri-bar-pushed { top: 58px !important; }
+
 #yubikiri-proxy-version {
   position: fixed;
   z-index: 2147483646;

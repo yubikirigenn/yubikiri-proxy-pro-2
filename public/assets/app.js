@@ -13,22 +13,45 @@
     let peekTimer = 0;
     let armed = true;
     const isVisible = () => root.classList.contains('yubikiri-bar-visible');
+
+    // Site headers pinned with position:fixed/sticky at the very top (Apple's
+    // JP nav is fixed at top:0) would disappear under the toolbar. Shift only
+    // those elements down while the bar is open - no site-specific rules.
+    const pushedClass = 'yubikiri-bar-pushed';
+    const unpush = () => {
+      for (const el of document.querySelectorAll('.' + pushedClass)) el.classList.remove(pushedClass);
+    };
+    const pushTopPinned = () => {
+      for (const el of document.body.querySelectorAll('*')) {
+        if (el === toolbar || el === grip || toolbar.contains(el) || grip.contains(el) || el.classList.contains(pushedClass)) continue;
+        const cs = getComputedStyle(el);
+        if ((cs.position === 'fixed' || cs.position === 'sticky') && cs.display !== 'none' && cs.visibility !== 'hidden' && el.getBoundingClientRect().top <= 2) {
+          el.classList.add(pushedClass);
+        }
+      }
+    };
+
+    const hide = () => {
+      root.classList.remove('yubikiri-bar-visible');
+      unpush();
+    };
     const show = () => {
       window.clearTimeout(hideTimer);
       root.classList.add('yubikiri-bar-visible');
+      pushTopPinned();
       window.clearTimeout(peekTimer);
       peekTimer = window.setTimeout(() => {
         const active = document.activeElement;
         if (active && toolbar.contains(active)) return;
         armed = false;
-        root.classList.remove('yubikiri-bar-visible');
+        hide();
       }, 2500);
     };
     const hideSoon = () => {
       window.clearTimeout(hideTimer);
       hideTimer = window.setTimeout(() => {
         if (toolbar.contains(document.activeElement)) return;
-        root.classList.remove('yubikiri-bar-visible');
+        hide();
       }, 450);
     };
 
