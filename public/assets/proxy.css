@@ -117,9 +117,10 @@ html.yubikiri-bar-visible #yubikiri-proxy-grip { display: none; }
   pointer-events: none;
 }
 
-html { scroll-padding-top: 66px; }
-body { padding-top: 0 !important; transition: padding-top .22s ease; }
-html.yubikiri-bar-visible body { padding-top: 58px !important; }
+/* The toolbar is a pure overlay: adding body padding here collides with
+   sites whose headers are absolutely positioned (Apple keeps its nav at
+   top:70px and it vanished under the shifted content). Retraction is handled
+   by the peek timer in app.js instead. */
 
 .visually-hidden {
   position: absolute !important;
