@@ -11,20 +11,26 @@
 
 * { box-sizing: border-box; }
 
+/* 100vh はペイン/ウィンドウのリサイズ後に再計算が追随しない環境がある
+   （Electronのwebview等）。%指定ならレイアウト時に必ず実ビューポートに解決される */
+html { height: 100%; }
+
 html, body { min-width: 320px; min-height: 100%; margin: 0; }
 
 body {
-  min-height: 100vh;
+  min-height: 100%;
   background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
 }
 
 .home-page {
   display: grid;
   place-items: center;
+  /* フロー内の子が増えても上寄せされないよう明示的に中央へ */
+  align-content: center;
   padding: 32px 22px;
 }
 
-.home-content { width: min(100%, 760px); margin-top: -8vh; }
+.home-content { width: min(100%, 760px); margin-top: -52px; }
 
 .wordmark {
   margin: 0 0 34px;
@@ -106,7 +112,7 @@ body {
 }
 
 @media (max-width: 520px) {
-  .home-content { margin-top: -4vh; }
+  .home-content { margin-top: -28px; }
   .wordmark { margin-bottom: 26px; }
   .url-form { gap: 8px; }
   .url-form input { height: 54px; padding-inline: 14px; }
