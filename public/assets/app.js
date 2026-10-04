@@ -11,12 +11,15 @@
     const root = document.documentElement;
     let hideTimer = 0;
     let peekTimer = 0;
+    let rescanTimer = 0;
     let armed = true;
     const isVisible = () => root.classList.contains('yubikiri-bar-visible');
 
     // Site headers pinned with position:fixed/sticky at the very top (Apple's
     // JP nav is fixed at top:0) would disappear under the toolbar. Shift only
     // those elements down while the bar is open - no site-specific rules.
+    // The scan repeats while the bar is open because many sites turn their
+    // header fixed (or replace the node) some seconds after load.
     const pushedClass = 'yubikiri-bar-pushed';
     const unpush = () => {
       for (const el of document.querySelectorAll('.' + pushedClass)) el.classList.remove(pushedClass);
@@ -32,6 +35,7 @@
     };
 
     const hide = () => {
+      if (rescanTimer) { window.clearInterval(rescanTimer); rescanTimer = 0; }
       root.classList.remove('yubikiri-bar-visible');
       unpush();
     };
@@ -39,6 +43,12 @@
       window.clearTimeout(hideTimer);
       root.classList.add('yubikiri-bar-visible');
       pushTopPinned();
+      if (!rescanTimer) {
+        rescanTimer = window.setInterval(() => {
+          if (!isVisible()) { window.clearInterval(rescanTimer); rescanTimer = 0; return; }
+          pushTopPinned();
+        }, 400);
+      }
       window.clearTimeout(peekTimer);
       peekTimer = window.setTimeout(() => {
         const active = document.activeElement;
