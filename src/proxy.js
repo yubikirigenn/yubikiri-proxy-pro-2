@@ -201,9 +201,10 @@ function rewriteCss(css, baseUrl) {
     .replace(/(@import\s+)(["'])(.*?)\2/gi, (_match, prefix, quote, value) => `${prefix}${quote}${urlForPage(value, baseUrl)}${quote}`);
 }
 
-function runtimeScript(target) {
+function runtimeScript(target, { noLaunder = false } = {}) {
   const upstreamUrl = JSON.stringify(target.href).replace(/</g, '\\u003c');
   return `(()=>{
+window.__YUBIKIRI_NO_LAUNDER__=${noLaunder ? 'true' : 'false'};
 const page=new URL(${upstreamUrl});
 const appOrigin=location.origin;
 const appPort=location.port;
@@ -357,8 +358,10 @@ if(cookieDescriptor&&cookieDescriptor.configurable&&cookieDescriptor.set&&tokenF
 // Rewrite the visible URL in place so the page lives in app-path space
 // (/<path>?__y=<token>) while /proxy/<token>/... stays canonical for every
 // request the browser sends to this server. Must run before site scripts.
+// Cloudflareのチャレンジページは表示URLの整合性を検査するため、
+// サーバー側がフラグを立てたときはロンダリングしない。
 const proxyPrefix='/proxy/'+tokenFromLocation;
-if(tokenFromLocation&&(location.pathname===proxyPrefix||location.pathname.startsWith(proxyPrefix+'/'))){
+if(!window.__YUBIKIRI_NO_LAUNDER__&&tokenFromLocation&&(location.pathname===proxyPrefix||location.pathname.startsWith(proxyPrefix+'/'))){
   const appPath=location.pathname.slice(proxyPrefix.length)||'/';
   const params=new URLSearchParams(location.search);
   if(!params.has('__y')){
@@ -539,7 +542,7 @@ function rewriteHtmlTree($, target) {
   $('[integrity]').removeAttr('integrity');
 }
 
-function rewriteHtml(source, target, token) {
+function rewriteHtml(source, target, token, { noLaunder = false, noRuntime = false } = {}) {
   const $ = cheerio.load(source, { decodeEntities: false });
   $('base').remove();
   $('meta[http-equiv="content-security-policy" i], meta[http-equiv="content-security-policy-report-only" i]').remove();
@@ -559,23 +562,36 @@ function rewriteHtml(source, target, token) {
   });
 
   const directory = new URL('.', target).pathname;
+  // Cloudflareのチャレンジページは環境の完全性を検査する。ランタイムの
+  // 差し替え（fetch/history等のパッチ）に触られないよう、属性書き換えと
+  // baseタグだけの最小構成で配信する。
+  const minimal = noRuntime;
   const toolbar = $('<div id="yubikiri-proxy-toolbar"></div>');
-  toolbar.append('<a href="/" data-proxy-home aria-label="Yubikiri Proxy">YUBIKIRI PROXY</a>');
-  const form = $('<form data-proxy-form action="/api/navigate" method="get"></form>');
-  form.append('<label class="visually-hidden" for="yubikiri-address">URL</label>');
-  form.append('<input id="yubikiri-address" name="url" type="text" inputmode="url" autocomplete="url" spellcheck="false" autocapitalize="off" required>');
-  form.find('input').attr('value', target.href);
-  form.append('<button type="submit">Go</button>');
-  form.append('<span data-form-error role="status" aria-live="polite"></span>');
-  toolbar.append(form);
-  $('body').prepend(toolbar);
-  $('body').prepend('<button id="yubikiri-proxy-toggle" type="button" aria-expanded="false" aria-controls="yubikiri-proxy-toolbar" aria-label="Yubikiri Proxyのバーを開く" title="Yubikiri Proxyのバーを開く">▾</button>');
-  $('body').append('<span id="yubikiri-proxy-version">Beta 1</span>');
+  if (!minimal) {
+    toolbar.append('<a href="/" data-proxy-home aria-label="Yubikiri Proxy">YUBIKIRI PROXY</a>');
+    const form = $('<form data-proxy-form action="/api/navigate" method="get"></form>');
+    form.append('<label class="visually-hidden" for="yubikiri-address">URL</label>');
+    form.append('<input id="yubikiri-address" name="url" type="text" inputmode="url" autocomplete="url" spellcheck="false" autocapitalize="off" required>');
+    form.find('input').attr('value', target.href);
+    form.append('<button type="submit">Go</button>');
+    form.append('<span data-form-error role="status" aria-live="polite"></span>');
+    toolbar.append(form);
+    $('body').prepend(toolbar);
+    $('body').prepend('<button id="yubikiri-proxy-toggle" type="button" aria-expanded="false" aria-controls="yubikiri-proxy-toolbar" aria-label="Yubikiri Proxyのバーを開く" title="Yubikiri Proxyのバーを開く">▾</button>');
+    $('body').append('<span id="yubikiri-proxy-version">Beta 1</span>');
+  }
 
   const head = $('head');
-  head.prepend(`<base href="/proxy/${token}${htmlEscape(directory)}"><script>${runtimeScript(target)}</script>`);
-  head.append('<link rel="stylesheet" href="/assets/proxy.css?v=11">');
-  head.append('<script src="/assets/app.js?v=11" defer></script>');
+  const baseTag = `<base href="/proxy/${token}${htmlEscape(directory)}">`;
+  if (minimal) {
+    head.prepend(baseTag);
+  } else {
+    head.prepend(`${baseTag}<script>${runtimeScript(target, { noLaunder })}</script>`);
+  }
+  if (!minimal) {
+    head.append('<link rel="stylesheet" href="/assets/proxy.css?v=11">');
+    head.append('<script src="/assets/app.js?v=11" defer></script>');
+  }
   return $.html();
 }
 
@@ -688,6 +704,7 @@ function jarFor(sid, token) {
     jar = new Map();
     sites.set(token, jar);
   }
+  sites.lastToken = token; // このsidで最後に使ったサイト（cdn-cgiフォールバック用）
   return jar;
 }
 
@@ -854,7 +871,11 @@ function createProxyRouter({ agentHub } = {}) {
     let remoteRequest;
     let remoteResponse;
     try {
-      const origin = decodeOrigin(req.params.origin);
+      // /proxy/:origin マウント外から透過モードで呼ばれた場合は
+      // server.js が req.yubikiriToken を設定する（チャレンジページの
+      // 元パス維持のため）。
+      const tokenParam = req.params.origin || req.yubikiriToken;
+      const origin = decodeOrigin(tokenParam);
       const suffix = req.url || '/';
       let target;
       try { target = new URL(suffix, origin); } catch { throw blockedTarget(); }
@@ -882,7 +903,7 @@ function createProxyRouter({ agentHub } = {}) {
         sid = newSid();
         sidCookie = `${SID_COOKIE}=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`;
       }
-      const jarCookie = jarCookieHeader(sid, req.params.origin, req.headers.cookie);
+      const jarCookie = jarCookieHeader(sid, tokenParam, req.headers.cookie);
       if (jarCookie) requestHeaders.cookie = jarCookie;
       else delete requestHeaders.cookie;
 
@@ -910,7 +931,7 @@ function createProxyRouter({ agentHub } = {}) {
         const viaAgent = await dispatchToAgent(agentHub, req, target, requestHeaders, hasBody);
         if (viaAgent) {
           remoteResponse = viaAgent;
-          await sendResponse(remoteResponse, res, req, target, req.params.origin, sid, sidCookie);
+          await sendResponse(remoteResponse, res, req, target, tokenParam, sid, sidCookie);
           return;
         }
       }
@@ -961,7 +982,7 @@ function createProxyRouter({ agentHub } = {}) {
         if (!transient) throw error;
         remoteResponse = await sendUpstream();
       }
-      await sendResponse(remoteResponse, res, req, target, req.params.origin, sid, sidCookie);
+      await sendResponse(remoteResponse, res, req, target, tokenParam, sid, sidCookie);
     } catch (error) {
       const targetHref = (() => { try { return target?.href; } catch { return req.originalUrl; } })();
       console.error(`[proxy] ${req.method} ${targetHref}: ${error.code || ''} ${error.message}`);
@@ -1038,8 +1059,20 @@ async function sendResponse(upstream, res, req, target, token, sid, sidCookie) {
       const decoded = decodeResponse(upstream, headers['content-encoding']);
       const body = await readLimited(decoded, limit);
       const charset = encodingFrom(contentType);
-      const source = iconv.decode(body, charset);
-      const output = html ? rewriteHtml(source, target, token) : rewriteCss(source, target);
+      let source = iconv.decode(body, charset);
+      // Cloudflareのチャレンジは表示URLと配信時のURLの整合性や環境の
+      // 完全性を検査する。一致しない/改変を検出すると検証が永遠に完了
+      // しないため、このページだけはURLロンダリングもランタイム注入も
+      // 行わず、属性書き換えとbaseタグのみで配信する。
+      const isChallenge = /challenge/i.test(String(headers['cf-mitigated'] || ''))
+        || /_cf_chl_opt|challenge-platform\//i.test(source);
+      if (isChallenge) {
+        // チャレンジが期待するページパス(cUPMDTk)とフローURL(fa)にも
+        // プロキシプレフィックスを足し、locationとの整合を保つ。
+        const challengePrefix = new RegExp(`(cUPMDTk:\\s*|fa:\\s*)(["'])(\\/(?!\\/)[^"']*?)\\2`, 'g');
+        source = source.replace(challengePrefix, `$1$2/proxy/${token}$3$2`);
+      }
+      const output = html ? rewriteHtml(source, target, token, { noLaunder: isChallenge, noRuntime: isChallenge }) : rewriteCss(source, target);
       const encoded = iconv.encode(output, charset);
       res.setHeader('content-type', contentType);
       res.setHeader('content-length', encoded.length);
@@ -1181,4 +1214,4 @@ async function handleWebSocketUpgrade(req, clientSocket, clientHead) {
   }
 }
 
-module.exports = { createProxyRouter, encodeProxyUrl, handleWebSocketUpgrade, validateTarget, htmlEscape, rewriteHtml, rewriteCss };
+module.exports = { createProxyRouter, encodeProxyUrl, handleWebSocketUpgrade, validateTarget, htmlEscape, rewriteHtml, rewriteCss, sidFromCookie, cookieJars };

@@ -2,7 +2,7 @@
 
 const path = require('node:path');
 const express = require('express');
-const { createProxyRouter, encodeProxyUrl, handleWebSocketUpgrade, validateTarget, htmlEscape } = require('./src/proxy');
+const { createProxyRouter, encodeProxyUrl, handleWebSocketUpgrade, validateTarget, htmlEscape, sidFromCookie, cookieJars } = require('./src/proxy');
 const { createAgentHub } = require('./src/agent-hub');
 
 const app = express();
@@ -82,7 +82,35 @@ app.post('/api/navigate', express.json({ limit: '8kb', strict: true }), async (r
 const agentHub = createAgentHub({ secret: process.env.AGENT_SECRET });
 if (agentHub.enabled) app.use('/internal/agent', agentHub.router);
 
-app.use('/proxy/:origin', createProxyRouter({ agentHub }));
+const proxyRouter = createProxyRouter({ agentHub });
+app.use('/proxy/:origin', proxyRouter);
+
+// Cloudflareのチャレンジページは環境の完全性を検査するためランタイム
+// スクリプトを注入せずに配信する。そのためチャレンジJSが送るルート相対の
+// /cdn-cgi/... リクエストはトークンを持たない。Cookieジャーからこの
+// ブラウザが直前に使っていたサイトへ導く（307でメソッドと本体を保持）。
+app.use('/cdn-cgi', (req, res, next) => {
+  const sid = sidFromCookie(req.headers.cookie);
+  const sites = sid && cookieJars.get(sid);
+  const token = sites && (sites.lastChallengeToken || sites.lastToken);
+  if (!token) return next();
+  res.redirect(307, `/proxy/${token}/cdn-cgi${req.url}`);
+});
+
+// CloudflareのマネージドチャレンジはページURLが配信時のパスと完全一致
+// しないと検証が完了しない（/proxy/ プレフィックスがあると不一致扱い）。
+// チャレンジ固有のトークン(__cf_chl_*)が付いたリクエストだけ、元パスの
+// まま透過的にプロキシ内容を提供する。
+app.use((req, res, next) => {
+  if (!/__cf_chl_tk=|__cf_chl_f_tk=|__cf_chl_rt_tk=/.test(req.url)) return next();
+  const sid = sidFromCookie(req.headers.cookie);
+  const sites = sid && cookieJars.get(sid);
+  const token = sites && sites.lastToken;
+  if (!token) return next();
+  sites.lastChallengeToken = token;
+  req.yubikiriToken = token;
+  proxyRouter(req, res, next);
+});
 
 app.get('/', (_req, res) => {
   res.sendFile(path.join(publicDir, 'index.html'));
@@ -107,10 +135,19 @@ app.get('*', (req, res) => {
           }
         }
       }
-    } catch {
-      // Invalid referers fall through to the regular not-found response.
+      } catch {
+        // Invalid referers fall through to the regular not-found response.
+      }
     }
-  }
+    // 参照元からは推定できないナビゲーション（チャレンジ通過後のクリーンな
+    // リダイレクト先など）は、Cookieジャーが記憶している直前のサイトへ導く。
+    const sid = sidFromCookie(req.headers.cookie);
+    const sites = sid && cookieJars.get(sid);
+    const lastToken = sites && sites.lastToken;
+    if (lastToken && /^\/(?!proxy\/|api\/|assets\/|internal\/)/.test(req.originalUrl)) {
+      res.redirect(302, `/proxy/${lastToken}${req.originalUrl}`);
+      return;
+    }
   res.status(404).sendFile(path.join(publicDir, 'index.html'));
 });
 
