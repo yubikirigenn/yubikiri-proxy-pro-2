@@ -553,13 +553,12 @@ function rewriteHtml(source, target, token) {
   form.append('<span data-form-error role="status" aria-live="polite"></span>');
   toolbar.append(form);
   $('body').prepend(toolbar);
-  $('body').prepend('<div id="yubikiri-proxy-grip" title="Yubikiri Proxyのバーを表示" aria-hidden="true"></div>');
   $('body').append('<span id="yubikiri-proxy-version">Beta 1</span>');
 
   const head = $('head');
   head.prepend(`<base href="/proxy/${token}${htmlEscape(directory)}"><script>${runtimeScript(target)}</script>`);
-  head.append('<link rel="stylesheet" href="/assets/proxy.css?v=6">');
-  head.append('<script src="/assets/app.js?v=6" defer></script>');
+  head.append('<link rel="stylesheet" href="/assets/proxy.css?v=7">');
+  head.append('<script src="/assets/app.js?v=7" defer></script>');
   return $.html();
 }
 

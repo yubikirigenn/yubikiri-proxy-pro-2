@@ -1,32 +1,16 @@
 (() => {
-  // The toolbar stays out of the way by default and slides down when the
-  // pointer comes near the top edge (or the grip is tapped on touch screens).
-  // It retracts by itself after a short peek so it never keeps blocking a
-  // site's own top navigation - move the pointer away once to keep it open.
-  const setupToolbarVisibility = () => {
+  // The toolbar permanently reserves the top 58px of the page: body padding
+  // moves normal content down, and headers pinned with position:fixed/sticky
+  // at the very top (Apple's JP nav etc.) are shifted below the bar too.
+  // Nothing is overlaid and the layout never shifts afterwards.
+  const setupToolbarSpace = () => {
     const toolbar = document.getElementById('yubikiri-proxy-toolbar');
-    const grip = document.getElementById('yubikiri-proxy-grip');
-    if (!toolbar || !grip) return;
+    if (!toolbar) return;
 
-    const root = document.documentElement;
-    let hideTimer = 0;
-    let peekTimer = 0;
-    let rescanTimer = 0;
-    let armed = true;
-    const isVisible = () => root.classList.contains('yubikiri-bar-visible');
-
-    // Site headers pinned with position:fixed/sticky at the very top (Apple's
-    // JP nav is fixed at top:0) would disappear under the toolbar. Shift only
-    // those elements down while the bar is open - no site-specific rules.
-    // The scan repeats while the bar is open because many sites turn their
-    // header fixed (or replace the node) some seconds after load.
     const pushedClass = 'yubikiri-bar-pushed';
-    const unpush = () => {
-      for (const el of document.querySelectorAll('.' + pushedClass)) el.classList.remove(pushedClass);
-    };
     const pushTopPinned = () => {
       for (const el of document.body.querySelectorAll('*')) {
-        if (el === toolbar || el === grip || toolbar.contains(el) || grip.contains(el) || el.classList.contains(pushedClass)) continue;
+        if (el === toolbar || toolbar.contains(el) || el.classList.contains(pushedClass)) continue;
         const cs = getComputedStyle(el);
         if ((cs.position === 'fixed' || cs.position === 'sticky') && cs.display !== 'none' && cs.visibility !== 'hidden' && el.getBoundingClientRect().top <= 2) {
           el.classList.add(pushedClass);
@@ -34,68 +18,14 @@
       }
     };
 
-    const hide = () => {
-      if (rescanTimer) { window.clearInterval(rescanTimer); rescanTimer = 0; }
-      root.classList.remove('yubikiri-bar-visible');
-      unpush();
-    };
-    const show = () => {
-      window.clearTimeout(hideTimer);
-      root.classList.add('yubikiri-bar-visible');
-      pushTopPinned();
-      if (!rescanTimer) {
-        rescanTimer = window.setInterval(() => {
-          if (!isVisible()) { window.clearInterval(rescanTimer); rescanTimer = 0; return; }
-          pushTopPinned();
-        }, 400);
-      }
-      window.clearTimeout(peekTimer);
-      peekTimer = window.setTimeout(() => {
-        const active = document.activeElement;
-        if (active && toolbar.contains(active)) return;
-        armed = false;
-        hide();
-      }, 2500);
-    };
-    const hideSoon = () => {
-      window.clearTimeout(hideTimer);
-      hideTimer = window.setTimeout(() => {
-        if (toolbar.contains(document.activeElement)) return;
-        hide();
-      }, 450);
-    };
-
-    document.addEventListener('mousemove', (event) => {
-      if (event.clientY <= 28) {
-        if (!isVisible() && armed) show();
-        return;
-      }
-      if (event.clientY > 60) armed = true;
-      if (!isVisible()) return;
-      // 要素判定にすることで、ツールバーの外に出したエラー表示の上では消えない
-      const over = document.elementFromPoint(event.clientX, event.clientY);
-      if (over && toolbar.contains(over)) return;
-      hideSoon();
-    }, { passive: true });
-    // バー内でのクリック・入力中はピーク終了を止めて作業を邪魔しない
-    toolbar.addEventListener('pointerdown', () => window.clearTimeout(peekTimer), true);
-    toolbar.addEventListener('focusin', () => {
-      armed = true;
-      show();
-    });
-    toolbar.addEventListener('focusout', hideSoon);
-    grip.addEventListener('click', () => {
-      armed = true;
-      show();
-    });
-    document.addEventListener('click', (event) => {
-      if (!isVisible()) return;
-      if (toolbar.contains(event.target) || grip.contains(event.target)) return;
-      hideSoon();
-    });
+    pushTopPinned();
+    // SPAs turn headers fixed (or replace nodes) after load, and scrolling
+    // brings sticky headers to the top - keep the reserve up to date.
+    window.setInterval(pushTopPinned, 800);
+    window.addEventListener('pageshow', pushTopPinned);
   };
 
-  setupToolbarVisibility();
+  setupToolbarSpace();
 
   const resetForms = () => {
     for (const form of document.querySelectorAll('[data-proxy-form]')) {
