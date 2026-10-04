@@ -571,7 +571,7 @@ function rewriteHtml(source, target, token, { noLaunder = false, noRuntime = fal
     toolbar.append('<a href="/" data-proxy-home aria-label="Yubikiri Proxy">YUBIKIRI PROXY</a>');
     const form = $('<form data-proxy-form action="/api/navigate" method="get"></form>');
     form.append('<label class="visually-hidden" for="yubikiri-address">URL</label>');
-    form.append('<input id="yubikiri-address" name="url" type="text" inputmode="url" autocomplete="url" spellcheck="false" autocapitalize="off" required>');
+    form.append('<input id="yubikiri-address" name="url" type="text" inputmode="url" autocomplete="url" placeholder="URL または検索キーワード" spellcheck="false" autocapitalize="off" required>');
     form.find('input').attr('value', target.href);
     form.append('<button type="submit">Go</button>');
     form.append('<span data-form-error role="status" aria-live="polite"></span>');

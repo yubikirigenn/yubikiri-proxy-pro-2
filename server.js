@@ -51,9 +51,21 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+// ホーム/ツールバーの入力欄: URL形式ならそのサイトへ、語句ならDuckDuckGo検索へ。
+const SEARCH_URL_BASE = process.env.SEARCH_URL_BASE || 'https://duckduckgo.com/?q=';
+function resolveNavigationInput(raw) {
+  const input = String(raw ?? '').trim();
+  if (!input || /^https?:\/\//i.test(input)) return input;
+  // 空白なしで「ドメインらしい形」（例: example.com、example.co.jp/path）ならURL扱い
+  if (!/\s/.test(input) && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?::\d+)?(?:[/?#].*)?$/i.test(input)) {
+    return `https://${input}`;
+  }
+  return SEARCH_URL_BASE + encodeURIComponent(input);
+}
+
 app.get('/api/navigate', async (req, res) => {
   try {
-    const target = await validateTarget(req.query.url);
+    const target = await validateTarget(resolveNavigationInput(req.query.url));
     // An immediate meta refresh replaces this navigation's history entry, so
     // Back returns to the previous page instead of replaying /api/navigate.
     const destination = htmlEscape(encodeProxyUrl(target));
@@ -66,7 +78,7 @@ app.get('/api/navigate', async (req, res) => {
 
 app.post('/api/navigate', express.json({ limit: '8kb', strict: true }), async (req, res) => {
   try {
-    const target = await validateTarget(req.body?.url);
+    const target = await validateTarget(resolveNavigationInput(req.body?.url));
     res.setHeader('Cache-Control', 'no-store');
     res.json({ path: encodeProxyUrl(target) });
   } catch (error) {
