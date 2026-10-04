@@ -720,16 +720,28 @@ function storeUpstreamCookies(setCookie, jar) {
   }
 }
 
-function jarCookieHeader(sid, token) {
+function jarCookieHeader(sid, token, browserHeader) {
   const jar = jarFor(sid, token);
   const pairs = [];
+  const seen = new Set();
   const now = Date.now();
   for (const [name, entry] of jar) {
     if (entry.expires <= now) {
       jar.delete(name);
       continue;
     }
+    seen.add(name);
     pairs.push(`${name}=${entry.value}`);
+  }
+  // ブラウザが保持しているCookie（前回までの__cf_bmなど）は初回接触の
+  // Cloudflare評価に効く。ジャーに無い名前だけ補完する。ジャー優先。
+  for (const pair of String(browserHeader || '').split(';')) {
+    const equals = pair.indexOf('=');
+    if (equals <= 0) continue;
+    const name = pair.slice(0, equals).trim();
+    if (!name || name === SID_COOKIE || seen.has(name)) continue;
+    seen.add(name);
+    pairs.push(`${name}=${pair.slice(equals + 1).trim()}`);
   }
   return pairs.length ? pairs.join('; ') : undefined;
 }
@@ -870,7 +882,7 @@ function createProxyRouter({ agentHub } = {}) {
         sid = newSid();
         sidCookie = `${SID_COOKIE}=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`;
       }
-      const jarCookie = jarCookieHeader(sid, req.params.origin);
+      const jarCookie = jarCookieHeader(sid, req.params.origin, req.headers.cookie);
       if (jarCookie) requestHeaders.cookie = jarCookie;
       else delete requestHeaders.cookie;
 
@@ -1118,7 +1130,7 @@ async function handleWebSocketUpgrade(req, clientSocket, clientHead) {
     // ハンドラー本体と同じく、上流Cookieはサーバー側ジャーから付与する
     const wsSid = sidFromCookie(req.headers.cookie);
     if (wsSid) {
-      const wsJarCookie = jarCookieHeader(wsSid, match[1]);
+      const wsJarCookie = jarCookieHeader(wsSid, match[1], req.headers.cookie);
       if (wsJarCookie) requestHeaders.cookie = wsJarCookie;
       else delete requestHeaders.cookie;
     }
