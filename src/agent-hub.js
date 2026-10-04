@@ -14,6 +14,9 @@ const AGENT_FRESH_MS = 15_000;
 const JOB_PICKUP_TIMEOUT_MS = 6_000;
 const AGENT_POLL_HOLD_MS = 20_000;
 const JOB_TTL_MS = 90_000;
+// 引き渡し済みジョブは長いストリーミング（ChatGPT等）の最中でもあるので、
+// 結果が来ないままエージェントが死んだ場合の回収上限だけ長めに置く。
+const JOB_STREAM_TTL_MS = 300_000;
 
 function safeEqual(provided, secret) {
   const a = Buffer.from(String(provided || ''));
@@ -40,6 +43,11 @@ function createAgentHub({ secret }) {
     while (handoutQueue.length) {
       const job = jobs.get(handoutQueue.shift());
       if (job) {
+        job.handedOut = true;
+        // 引き渡されたジョブの上流取得は6秒より長く普通にある（ChatGPT等）。
+        // ここでピックアップ監視を止めないと、取得中に二重フォールバックが
+        // 発火し、後から届く結果が410で捨てられてしまう。
+        if (job.pickupTimer) { clearTimeout(job.pickupTimer); job.pickupTimer = null; }
         res.json({ job: job.descriptor });
         return true;
       }
@@ -112,7 +120,9 @@ function createAgentHub({ secret }) {
   const sweep = setInterval(() => {
     const now = Date.now();
     for (const [id, job] of jobs) {
-      if (now - job.created > JOB_TTL_MS) {
+      // 引き渡し済みジョブは結果受信時に消える。ストリーミング中に回収しない。
+      const limit = job.handedOut ? JOB_STREAM_TTL_MS : JOB_TTL_MS;
+      if (now - job.created > limit) {
         jobs.delete(id);
         job.settle({ error: 'JOB_EXPIRED', status: 502, headers: {}, stream: null });
       }
@@ -140,6 +150,7 @@ function createAgentHub({ secret }) {
       settle: (outcome) => {
         if (job.settled) return;
         job.settled = true;
+        if (job.pickupTimer) { clearTimeout(job.pickupTimer); job.pickupTimer = null; }
         resolveDispatch(outcome.error ? null : attachMeta(outcome));
       },
     };
@@ -147,7 +158,7 @@ function createAgentHub({ secret }) {
     handoutQueue.push(id);
     const resume = waitingAgents.shift();
     if (resume) resume();
-    setTimeout(() => job.settle({ error: 'PICKUP_TIMEOUT', status: 502, headers: {}, stream: null }), JOB_PICKUP_TIMEOUT_MS).unref();
+    job.pickupTimer = setTimeout(() => job.settle({ error: 'PICKUP_TIMEOUT', status: 502, headers: {}, stream: null }), JOB_PICKUP_TIMEOUT_MS).unref();
   });
 
   const attachMeta = (outcome) => {

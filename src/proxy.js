@@ -4,6 +4,7 @@ const dns = require('node:dns').promises;
 const http = require('node:http');
 const https = require('node:https');
 const net = require('node:net');
+const crypto = require('node:crypto');
 const zlib = require('node:zlib');
 const { Transform, pipeline } = require('node:stream');
 const express = require('express');
@@ -205,6 +206,7 @@ function runtimeScript(target) {
   return `(()=>{
 const page=new URL(${upstreamUrl});
 const appOrigin=location.origin;
+const appPort=location.port;
 const tokenFor=origin=>btoa(origin).replaceAll('+','-').replaceAll('/','_').replace(/=/g,'');
 const isProxyPath=pathname=>{
   const match=pathname.match(new RegExp('^/proxy/([A-Za-z0-9_-]+)(?:/|$)'));
@@ -227,14 +229,28 @@ const toProxy=value=>{
       if(isProxyPath(u.pathname)||u.pathname.startsWith('/assets/'))return u.pathname+u.search+u.hash;
       u.protocol=page.protocol;u.host=page.host;
     }
+    repairPort(u);
     return '/proxy/'+tokenFor(u.origin)+u.pathname+u.search+u.hash;
   }catch{return value}
+};
+// location は上書きできないため本物のアプリ側URLを返す。その結果、サイト側が
+// 「設定上のホスト名 + location.port」を混ぜて https://site.example:3000 のような
+// 存在しないオリジンを作ることがある（ChatGPT等）。アプリと同じポートを持つ
+// 外部ホストはその混入とみなし、ポートを落として本来のオリジンに修復する。
+const repairPort=u=>{
+  if(!appPort||u.port!==appPort||u.hostname===location.hostname)return;
+  u.port='';
+  if(page.protocol==='https:'&&u.protocol==='http:')u.protocol='https:';
 };
 const toProxyWebSocket=value=>{
   const raw=value instanceof URL?value.href:String(value);
   try{
     const u=new URL(raw,page);
     if(u.protocol!=='ws:'&&u.protocol!=='wss:')return toProxy(raw);
+    if(appPort&&u.port===appPort&&u.hostname!==location.hostname){
+      u.port='';
+      if(page.protocol==='https:')u.protocol='wss:';
+    }
     const upstreamProtocol=u.protocol==='wss:'?'https:':'http:';
     const upstreamOrigin=upstreamProtocol+'//'+u.host;
     const socketProtocol=location.protocol==='https:'?'wss:':'ws:';
@@ -558,8 +574,8 @@ function rewriteHtml(source, target, token) {
 
   const head = $('head');
   head.prepend(`<base href="/proxy/${token}${htmlEscape(directory)}"><script>${runtimeScript(target)}</script>`);
-  head.append('<link rel="stylesheet" href="/assets/proxy.css?v=10">');
-  head.append('<script src="/assets/app.js?v=10" defer></script>');
+  head.append('<link rel="stylesheet" href="/assets/proxy.css?v=11">');
+  head.append('<script src="/assets/app.js?v=11" defer></script>');
   return $.html();
 }
 
@@ -632,6 +648,90 @@ function scopedSetCookie(value, token, target, clientSecure) {
   }
   if (!path.startsWith('/')) path = `/${path}`;
   return [first, `Path=/proxy/${token}${path}`, ...attributes].filter(Boolean).join('; ');
+}
+
+// Upstream cookies live in a server-side jar and never have to survive in the
+// browser. __Host-/__Secure- prefixed cookies reject scoped paths (and
+// Secure-over-http), so path-scoped browser copies silently vanish for sites
+// like ChatGPT and its APIs answer 401. The jar is keyed by an anonymous
+// browser session id plus the site token.
+const SID_COOKIE = 'yubikiri_sid';
+const cookieJars = new Map(); // sid -> Map(token -> Map(name -> {value, expires}))
+const MAX_JAR_SESSIONS = 400;
+
+function sidFromCookie(header) {
+  if (!header) return null;
+  for (const pair of String(header).split(';')) {
+    const equals = pair.indexOf('=');
+    if (equals < 0) continue;
+    if (pair.slice(0, equals).trim() !== SID_COOKIE) continue;
+    const value = pair.slice(equals + 1).trim();
+    return /^[A-Za-z0-9_-]{8,64}$/.test(value) ? value : null;
+  }
+  return null;
+}
+
+function newSid() {
+  return crypto.randomUUID().replaceAll('-', '');
+}
+
+function jarFor(sid, token) {
+  let sites = cookieJars.get(sid);
+  if (!sites) {
+    while (cookieJars.size >= MAX_JAR_SESSIONS) cookieJars.delete(cookieJars.keys().next().value);
+    sites = new Map();
+  }
+  cookieJars.delete(sid);
+  cookieJars.set(sid, sites); // insertion order = eviction order
+  let jar = sites.get(token);
+  if (!jar) {
+    jar = new Map();
+    sites.set(token, jar);
+  }
+  return jar;
+}
+
+function storeUpstreamCookies(setCookie, jar) {
+  const list = Array.isArray(setCookie) ? setCookie : setCookie ? [setCookie] : [];
+  const now = Date.now();
+  for (const entry of list) {
+    const first = String(entry).split(';', 1)[0];
+    const equals = first.indexOf('=');
+    if (equals <= 0) continue;
+    const name = first.slice(0, equals).trim();
+    const value = first.slice(equals + 1).trim();
+    if (!name) continue;
+    let expires = Infinity;
+    for (const segment of String(entry).split(';').slice(1)) {
+      const trimmed = segment.trim();
+      const attrEquals = trimmed.indexOf('=');
+      const key = (attrEquals < 0 ? trimmed : trimmed.slice(0, attrEquals)).trim().toLowerCase();
+      const attrValue = attrEquals < 0 ? '' : trimmed.slice(attrEquals + 1).trim();
+      if (key === 'max-age') {
+        const seconds = Number(attrValue);
+        if (Number.isFinite(seconds)) expires = seconds <= 0 ? 0 : now + seconds * 1000;
+      } else if (key === 'expires') {
+        const parsed = Date.parse(attrValue);
+        if (Number.isFinite(parsed)) expires = parsed;
+      }
+    }
+    if (expires <= now) jar.delete(name);
+    else jar.set(name, { value, expires });
+  }
+}
+
+function jarCookieHeader(sid, token) {
+  const jar = jarFor(sid, token);
+  const pairs = [];
+  const now = Date.now();
+  for (const [name, entry] of jar) {
+    if (entry.expires <= now) {
+      jar.delete(name);
+      continue;
+    }
+    pairs.push(`${name}=${entry.value}`);
+  }
+  return pairs.length ? pairs.join('; ') : undefined;
 }
 
 function decodeResponse(stream, encoding) {
@@ -761,6 +861,19 @@ function createProxyRouter({ agentHub } = {}) {
       const referer = proxyReferer(req.headers.referer);
       if (referer) requestHeaders.referer = referer;
 
+      // 上流Cookieはサーバー側ジャーで管理（__Host-/__Secure-接頭辞や
+      // httpでのSecure属性はブラウザに保存できず、Path書き換えと相性が悪い）。
+      // ブラウザのCookieヘッダーはページJSが書いた値の供給のみに使う。
+      let sid = sidFromCookie(req.headers.cookie);
+      let sidCookie = null;
+      if (!sid) {
+        sid = newSid();
+        sidCookie = `${SID_COOKIE}=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`;
+      }
+      const jarCookie = jarCookieHeader(sid, req.params.origin);
+      if (jarCookie) requestHeaders.cookie = jarCookie;
+      else delete requestHeaders.cookie;
+
       if (Number(req.headers['content-length']) > MAX_UPLOAD_BYTES) {
         res.status(413).type('html').send(htmlError(413, '送信データが大きすぎます', 'ファイルのサイズを小さくしてください'));
         return;
@@ -785,7 +898,7 @@ function createProxyRouter({ agentHub } = {}) {
         const viaAgent = await dispatchToAgent(agentHub, req, target, requestHeaders, hasBody);
         if (viaAgent) {
           remoteResponse = viaAgent;
-          await sendResponse(remoteResponse, res, req, target, req.params.origin);
+          await sendResponse(remoteResponse, res, req, target, req.params.origin, sid, sidCookie);
           return;
         }
       }
@@ -797,9 +910,15 @@ function createProxyRouter({ agentHub } = {}) {
       const sendUpstream = async () => {
         const attempt = transport.request(options);
         remoteRequest = attempt;
+        // 接続から応答ヘッダーまでは30秒。ヘッダー受領後はボディの生成中であり、
+        // ChatGPT等のSSEは思考中に長く無通信になるため無通信では切断しない。
+        // 極端に停滞した接続のみ5分で回収する。
         attempt.setTimeout(30_000, () => attempt.destroy(new Error('UPSTREAM_TIMEOUT')));
         const responsePromise = new Promise((resolve, reject) => {
-          attempt.once('response', resolve);
+          attempt.once('response', (response) => {
+            attempt.setTimeout(300_000, () => attempt.destroy(new Error('UPSTREAM_TIMEOUT')));
+            resolve(response);
+          });
           attempt.once('error', reject);
         });
         if (hasBody) {
@@ -830,7 +949,7 @@ function createProxyRouter({ agentHub } = {}) {
         if (!transient) throw error;
         remoteResponse = await sendUpstream();
       }
-      await sendResponse(remoteResponse, res, req, target, req.params.origin);
+      await sendResponse(remoteResponse, res, req, target, req.params.origin, sid, sidCookie);
     } catch (error) {
       const targetHref = (() => { try { return target?.href; } catch { return req.originalUrl; } })();
       console.error(`[proxy] ${req.method} ${targetHref}: ${error.code || ''} ${error.message}`);
@@ -853,7 +972,7 @@ function createProxyRouter({ agentHub } = {}) {
   return router;
 }
 
-async function sendResponse(upstream, res, req, target, token) {
+async function sendResponse(upstream, res, req, target, token, sid, sidCookie) {
   const status = upstream.statusCode || 502;
   const contentType = String(upstream.headers['content-type'] || 'application/octet-stream');
   const html = /(?:text\/html|application\/xhtml\+xml)/i.test(contentType);
@@ -861,6 +980,9 @@ async function sendResponse(upstream, res, req, target, token) {
   const rewrite = html || css;
   const connectionTokens = String(upstream.headers.connection || '').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
   const headers = upstream.headers;
+  if (headers['set-cookie'] !== undefined && sid) {
+    storeUpstreamCookies(headers['set-cookie'], jarFor(sid, token));
+  }
 
   for (const [name, value] of Object.entries(headers)) {
     if (value === undefined || name === 'set-cookie' || name === 'location' || name === 'refresh' || name === 'referrer-policy' || isHopByHop(name, connectionTokens)) continue;
@@ -870,6 +992,12 @@ async function sendResponse(upstream, res, req, target, token) {
     res.setHeader(name, value);
   }
   if (Array.isArray(headers['set-cookie'])) res.setHeader('set-cookie', headers['set-cookie'].map((cookie) => scopedSetCookie(cookie, token, target, req.protocol === 'https')));
+  if (sidCookie) {
+    const existing = res.getHeader('set-cookie');
+    const list = existing === undefined ? [] : Array.isArray(existing) ? existing.slice() : [String(existing)];
+    list.push(sidCookie);
+    res.setHeader('set-cookie', list);
+  }
   res.setHeader('Referrer-Policy', 'same-origin');
   if (headers.location) {
     try {
@@ -986,6 +1114,14 @@ async function handleWebSocketUpgrade(req, clientSocket, clientHead) {
     if (req.headers.origin) requestHeaders.origin = origin.origin;
     const referer = proxyReferer(req.headers.referer);
     if (referer) requestHeaders.referer = referer;
+
+    // ハンドラー本体と同じく、上流Cookieはサーバー側ジャーから付与する
+    const wsSid = sidFromCookie(req.headers.cookie);
+    if (wsSid) {
+      const wsJarCookie = jarCookieHeader(wsSid, match[1]);
+      if (wsJarCookie) requestHeaders.cookie = wsJarCookie;
+      else delete requestHeaders.cookie;
+    }
 
     const transport = target.protocol === 'https:' ? https : http;
     remoteRequest = transport.request({

@@ -21,6 +21,9 @@ const AGENT_SECRET = process.env.AGENT_SECRET || '';
 const CONCURRENCY = Math.max(1, Number(process.env.AGENT_CONCURRENCY) || 6);
 const UPSTREAM_TIMEOUT_MS = 30_000;
 const SERVER_TIMEOUT_MS = 35_000;
+// ボディ生成中（SSEの思考時間など）に許容する無通信時間。無通信即切断は
+// ChatGPTのような長いストリーミングを壊す。
+const STREAM_IDLE_TIMEOUT_MS = 300_000;
 
 if (!RENDER_URL || !AGENT_SECRET) {
   console.error('RENDER_URL と AGENT_SECRET を環境変数で指定してください。例:');
@@ -82,7 +85,10 @@ function performUpstream(job) {
     req.once('error', reject);
     if (job.bodyBase64) req.write(Buffer.from(job.bodyBase64, 'base64'));
     req.end();
-    req.once('response', resolve);
+    req.once('response', (response) => {
+      req.setTimeout(STREAM_IDLE_TIMEOUT_MS, () => req.destroy(new Error('UPSTREAM_TIMEOUT')));
+      resolve(response);
+    });
   });
 }
 
@@ -99,7 +105,9 @@ function sendResult(jobId, outcome, bodyStream) {
       method: 'POST',
       headers,
     });
-    req.setTimeout(SERVER_TIMEOUT_MS, () => req.destroy());
+    // ハブはボディを消費し終えるまで応答を返さない。転送中はストリーミングの
+    // 停止（上流の思考時間など）が普通にあるため、無通信許容は長めに取る。
+    req.setTimeout(STREAM_IDLE_TIMEOUT_MS, () => req.destroy());
     req.once('response', () => resolve());
     req.once('error', () => resolve());
     if (bodyStream) pipeline(bodyStream, req, () => {});
