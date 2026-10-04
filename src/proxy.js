@@ -559,8 +559,8 @@ function rewriteHtml(source, target, token) {
 
   const head = $('head');
   head.prepend(`<base href="/proxy/${token}${htmlEscape(directory)}"><script>${runtimeScript(target)}</script>`);
-  head.append('<link rel="stylesheet" href="/assets/proxy.css?v=8">');
-  head.append('<script src="/assets/app.js?v=8" defer></script>');
+  head.append('<link rel="stylesheet" href="/assets/proxy.css?v=9">');
+  head.append('<script src="/assets/app.js?v=9" defer></script>');
   return $.html();
 }
 

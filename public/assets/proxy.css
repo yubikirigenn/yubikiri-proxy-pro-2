@@ -22,28 +22,30 @@ html.yubikiri-bar-open #yubikiri-proxy-toolbar {
   opacity: 1;
 }
 
-/* Small pull tab at the top edge. The only way to open the bar - no cursor
-   tracking, no layout reservation, the page is never touched. */
+/* Small pull tab at the top-left edge. The only way to open the bar - no
+   cursor tracking, no layout reservation, the page is never touched.
+   Grab it to slide it along the top (clamped by app.js). */
 #yubikiri-proxy-toggle {
   position: fixed;
   z-index: 2147483646;
   top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 56px;
+  left: 0;
+  width: 48px;
   height: 16px;
   border: 0;
-  border-radius: 0 0 8px 8px;
-  background: rgb(70 70 70 / 45%);
-  color: rgb(255 255 255 / 65%);
-  cursor: pointer;
+  border-radius: 0 0 8px 0;
+  background: rgb(70 70 70 / 40%);
+  color: rgb(255 255 255 / 60%);
+  cursor: grab;
+  touch-action: none;
   display: grid;
   place-items: center;
   padding: 0;
   font: 10px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-#yubikiri-proxy-toggle:hover { background: rgb(70 70 70 / 75%); color: #fff; }
+#yubikiri-proxy-toggle:hover { background: rgb(70 70 70 / 70%); color: #fff; }
+#yubikiri-proxy-toggle:active { cursor: grabbing; }
 
 html.yubikiri-bar-open #yubikiri-proxy-toggle { display: none; }
 
