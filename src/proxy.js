@@ -19,6 +19,9 @@ const MAX_CSS_BYTES = 2 * 1024 * 1024;
 const MAX_TRANSFORMS = 2;
 const MAX_ACTIVE_WEBSOCKETS = 16;
 const DNS_CACHE_MS = 30_000;
+// 接続から応答ヘッダーまでの待ち時間。遅いオリジン（TLS再開が遅いCDN等）でも
+// エラー画面にならないよう、ヘッダー受領後の5分とは別にこの値だけ待つ。
+const UPSTREAM_HEADER_TIMEOUT_MS = 60_000;
 const dnsCache = new Map();
 let activeRequests = 0;
 let activeTransforms = 0;
@@ -461,6 +464,22 @@ const toAppPage=value=>{
     const raw=value instanceof URL?value.href:String(value);
     const u=new URL(String(raw),page);
     if(!/^https?:$/.test(u.protocol))return String(raw);
+    // サイトJSはロンダリング後のlocation（アプリオリジン）から絶対URLを
+    // 作ってpushStateすることがある。アプリオリジンを「別サイト」とみなすと
+    // /proxy/<localhostトークン>/... というポート付きの不正トークンが履歴に
+    // 積まれ、戻るでTARGET_BLOCKEDになるため、アプリ空間として正規化する。
+    if(u.origin===appOrigin){
+      if(u.pathname.startsWith('/assets/')||u.pathname.startsWith('/api/')||u.pathname.startsWith('/internal/'))return u.pathname+u.search+u.hash;
+      if(isProxyPath(u.pathname)){
+        const rest=u.pathname.slice('/proxy/'.length);
+        const slash=rest.indexOf('/');
+        const token=slash<0?rest:rest.slice(0,slash);
+        const pathPart=slash<0?'/':rest.slice(slash);
+        return pathPart+'?__y='+token+(u.search.length>1?'&'+u.search.slice(1):'')+u.hash;
+      }
+      if(u.searchParams.has('__y'))return u.pathname+u.search+u.hash;
+      return u.pathname+'?__y='+tokenFromLocation+(u.search.length>1?'&'+u.search.slice(1):'')+u.hash;
+    }
     if(u.origin===page.origin){
       if(u.searchParams.has('__y')||u.pathname.startsWith('/assets/'))return u.pathname+u.search+u.hash;
       if(isProxyPath(u.pathname)){
@@ -603,7 +622,7 @@ function htmlError(status, title, message, detail) {
 }
 
 function upstreamErrorHint(error) {
-  if (error.message === 'UPSTREAM_TIMEOUT') return '接続先が30秒以内に応答しませんでした（UPSTREAM_TIMEOUT）。';
+  if (error.message === 'UPSTREAM_TIMEOUT') return `接続先が${Math.round(UPSTREAM_HEADER_TIMEOUT_MS / 1000)}秒以内に応答しませんでした（UPSTREAM_TIMEOUT）。`;
   const code = String(error.code || '');
   switch (code) {
     case '': return '';
@@ -946,7 +965,7 @@ function createProxyRouter({ agentHub } = {}) {
         // 接続から応答ヘッダーまでは30秒。ヘッダー受領後はボディの生成中であり、
         // ChatGPT等のSSEは思考中に長く無通信になるため無通信では切断しない。
         // 極端に停滞した接続のみ5分で回収する。
-        attempt.setTimeout(30_000, () => attempt.destroy(new Error('UPSTREAM_TIMEOUT')));
+        attempt.setTimeout(UPSTREAM_HEADER_TIMEOUT_MS, () => attempt.destroy(new Error('UPSTREAM_TIMEOUT')));
         const responsePromise = new Promise((resolve, reject) => {
           attempt.once('response', (response) => {
             attempt.setTimeout(300_000, () => attempt.destroy(new Error('UPSTREAM_TIMEOUT')));
