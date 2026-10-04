@@ -1,31 +1,39 @@
 (() => {
-  // The toolbar permanently reserves the top 58px of the page: body padding
-  // moves normal content down, and headers pinned with position:fixed/sticky
-  // at the very top (Apple's JP nav etc.) are shifted below the bar too.
-  // Nothing is overlaid and the layout never shifts afterwards.
-  const setupToolbarSpace = () => {
+  // The page is never touched: no padding, no layout reservation, no cursor
+  // tracking. A small pull tab at the top edge toggles the toolbar; the bar
+  // closes via its ✕, an outside click, or Escape.
+  const setupToolbarToggle = () => {
     const toolbar = document.getElementById('yubikiri-proxy-toolbar');
-    if (!toolbar) return;
+    const toggle = document.getElementById('yubikiri-proxy-toggle');
+    if (!toolbar || !toggle) return;
 
-    const pushedClass = 'yubikiri-bar-pushed';
-    const pushTopPinned = () => {
-      for (const el of document.body.querySelectorAll('*')) {
-        if (el === toolbar || toolbar.contains(el) || el.classList.contains(pushedClass)) continue;
-        const cs = getComputedStyle(el);
-        if ((cs.position === 'fixed' || cs.position === 'sticky') && cs.display !== 'none' && cs.visibility !== 'hidden' && el.getBoundingClientRect().top <= 2) {
-          el.classList.add(pushedClass);
-        }
-      }
+    const root = document.documentElement;
+    const close = () => {
+      root.classList.remove('yubikiri-bar-open');
+      toggle.setAttribute('aria-expanded', 'false');
+    };
+    const open = () => {
+      root.classList.add('yubikiri-bar-open');
+      toggle.setAttribute('aria-expanded', 'true');
     };
 
-    pushTopPinned();
-    // SPAs turn headers fixed (or replace nodes) after load, and scrolling
-    // brings sticky headers to the top - keep the reserve up to date.
-    window.setInterval(pushTopPinned, 800);
-    window.addEventListener('pageshow', pushTopPinned);
+    toggle.addEventListener('click', () => {
+      if (root.classList.contains('yubikiri-bar-open')) close();
+      else open();
+    });
+    const closeButton = toolbar.querySelector('.yubikiri-bar-close');
+    if (closeButton) closeButton.addEventListener('click', close);
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && root.classList.contains('yubikiri-bar-open')) close();
+    });
+    document.addEventListener('click', (event) => {
+      if (!root.classList.contains('yubikiri-bar-open')) return;
+      if (toolbar.contains(event.target) || toggle.contains(event.target)) return;
+      close();
+    });
   };
 
-  setupToolbarSpace();
+  setupToolbarToggle();
 
   const resetForms = () => {
     for (const form of document.querySelectorAll('[data-proxy-form]')) {
