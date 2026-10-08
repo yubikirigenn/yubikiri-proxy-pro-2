@@ -1007,7 +1007,8 @@ function createProxyRouter({ agentHub } = {}) {
       await sendResponse(remoteResponse, res, req, target, tokenParam, sid, sidCookie);
     } catch (error) {
       const targetHref = (() => { try { return target?.href; } catch { return req.originalUrl; } })();
-      console.error(`[proxy] ${req.method} ${targetHref}: ${error.code || ''} ${error.message} after ${Date.now() - startedAt}ms`);
+      const peer = remoteRequest?.socket?.remoteAddress || 'none';
+      console.error(`[proxy] ${req.method} ${targetHref}: ${error.code || ''} ${error.message} after ${Date.now() - startedAt}ms peer=${peer}`);
       if (res.headersSent) {
         res.destroy();
       } else {
