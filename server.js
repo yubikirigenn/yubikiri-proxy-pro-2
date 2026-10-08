@@ -51,8 +51,8 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-// ホーム/ツールバーの入力欄: URL形式ならそのサイトへ、語句ならDuckDuckGo検索へ。
-const SEARCH_URL_BASE = process.env.SEARCH_URL_BASE || 'https://duckduckgo.com/?q=';
+// ホーム/ツールバーの入力欄: URL形式ならそのサイトへ、語句ならBing検索へ。
+const SEARCH_URL_BASE = process.env.SEARCH_URL_BASE || 'https://www.bing.com/search?q=';
 function resolveNavigationInput(raw) {
   const input = String(raw ?? '').trim();
   if (!input || /^https?:\/\//i.test(input)) return input;
