@@ -881,6 +881,7 @@ async function dispatchToAgent(agentHub, req, target, requestHeaders, hasBody) {
 function createProxyRouter({ agentHub } = {}) {
   const router = express.Router({ mergeParams: true });
   const handler = async (req, res) => {
+    const startedAt = Date.now();
     if (activeRequests >= MAX_ACTIVE_REQUESTS) {
       res.status(503).setHeader('Retry-After', '3');
       res.type('html').send(htmlError(503, 'しばらく待ってからお試しください', '接続が混み合っています'));
@@ -962,7 +963,7 @@ function createProxyRouter({ agentHub } = {}) {
       const sendUpstream = async () => {
         const attempt = transport.request(options);
         remoteRequest = attempt;
-        // 接続から応答ヘッダーまでは30秒。ヘッダー受領後はボディの生成中であり、
+        // 接続から応答ヘッダーまでは UPSTREAM_HEADER_TIMEOUT_MS。ヘッダー受領後はボディの生成中であり、
         // ChatGPT等のSSEは思考中に長く無通信になるため無通信では切断しない。
         // 極端に停滞した接続のみ5分で回収する。
         attempt.setTimeout(UPSTREAM_HEADER_TIMEOUT_MS, () => attempt.destroy(new Error('UPSTREAM_TIMEOUT')));
@@ -1004,7 +1005,7 @@ function createProxyRouter({ agentHub } = {}) {
       await sendResponse(remoteResponse, res, req, target, tokenParam, sid, sidCookie);
     } catch (error) {
       const targetHref = (() => { try { return target?.href; } catch { return req.originalUrl; } })();
-      console.error(`[proxy] ${req.method} ${targetHref}: ${error.code || ''} ${error.message}`);
+      console.error(`[proxy] ${req.method} ${targetHref}: ${error.code || ''} ${error.message} after ${Date.now() - startedAt}ms`);
       if (res.headersSent) {
         res.destroy();
       } else {
