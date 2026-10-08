@@ -22,6 +22,8 @@ const DNS_CACHE_MS = 30_000;
 // 接続から応答ヘッダーまでの待ち時間。遅いオリジン（TLS再開が遅いCDN等）でも
 // エラー画面にならないよう、ヘッダー受領後の5分とは別にこの値だけ待つ。
 const UPSTREAM_HEADER_TIMEOUT_MS = 60_000;
+const upstreamHttpsAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 1_000, maxSockets: 64 });
+const upstreamHttpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 1_000, maxSockets: 64 });
 const dnsCache = new Map();
 let activeRequests = 0;
 let activeTransforms = 0;
@@ -941,7 +943,7 @@ function createProxyRouter({ agentHub } = {}) {
         headers: requestHeaders,
         lookup: createPinnedLookup(addresses),
         servername: net.isIP(target.hostname.replace(/^\[|\]$/g, '')) ? undefined : target.hostname,
-        agent: target.protocol === 'https:' ? https.globalAgent : http.globalAgent,
+        agent: target.protocol === 'https:' ? upstreamHttpsAgent : upstreamHttpAgent,
       };
       const hasBody = !['GET', 'HEAD'].includes(req.method) && (Number(req.headers['content-length']) > 0 || Boolean(req.headers['transfer-encoding']));
 
