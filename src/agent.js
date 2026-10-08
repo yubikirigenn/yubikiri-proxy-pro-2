@@ -18,7 +18,7 @@ const { pipeline } = require('node:stream');
 
 const RENDER_URL = (process.env.RENDER_URL || '').replace(/\/+$/, '');
 const AGENT_SECRET = process.env.AGENT_SECRET || '';
-const CONCURRENCY = Math.max(1, Number(process.env.AGENT_CONCURRENCY) || 6);
+const CONCURRENCY = Math.max(1, Number(process.env.AGENT_CONCURRENCY) || 12);
 const UPSTREAM_TIMEOUT_MS = 60_000;
 const SERVER_TIMEOUT_MS = 35_000;
 // ボディ生成中（SSEの思考時間など）に許容する無通信時間。無通信即切断は

@@ -11,7 +11,7 @@ const crypto = require('node:crypto');
 const express = require('express');
 
 const AGENT_FRESH_MS = 15_000;
-const JOB_PICKUP_TIMEOUT_MS = 6_000;
+const JOB_PICKUP_TIMEOUT_MS = 30_000;
 const AGENT_POLL_HOLD_MS = 20_000;
 const JOB_TTL_MS = 90_000;
 // 引き渡し済みジョブは長いストリーミング（ChatGPT等）の最中でもあるので、
