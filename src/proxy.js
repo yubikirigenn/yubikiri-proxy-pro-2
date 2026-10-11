@@ -144,6 +144,18 @@ function encodeProxyUrl(target) {
   return `/proxy/${originToken(target.origin)}${target.pathname}${target.search}${target.hash}`;
 }
 
+function bingRedirectDestination(target) {
+  if (target.hostname !== 'www.bing.com' || target.pathname !== '/ck/a') return null;
+  const encoded = target.searchParams.get('u');
+  if (!encoded || !encoded.startsWith('a1')) return null;
+  const base64 = encoded.slice(2).replace(/-/g, '+').replace(/_/g, '/');
+  let decoded;
+  try {
+    decoded = new URL(Buffer.from(base64 + '='.repeat((4 - (base64.length % 4)) % 4), 'base64').toString('utf8'), 'https://www.bing.com');
+  } catch { return null; }
+  return ['http:', 'https:'].includes(decoded.protocol) ? decoded : null;
+}
+
 function decodeOrigin(token) {
   if (typeof token !== 'string' || token.length > 512 || !/^[A-Za-z0-9_-]+$/.test(token)) throw blockedTarget();
   let parsed;
@@ -902,6 +914,11 @@ function createProxyRouter({ agentHub } = {}) {
       let target;
       try { target = new URL(suffix, origin); } catch { throw blockedTarget(); }
       if (target.origin !== origin.origin || target.username || target.password) throw blockedTarget();
+      const bingDestination = bingRedirectDestination(target);
+      if (bingDestination) {
+        res.redirect(302, encodeProxyUrl(bingDestination));
+        return;
+      }
       const addresses = await resolvePublicAddresses(target.hostname);
       const transport = target.protocol === 'https:' ? https : http;
       const requestHeaders = {};
