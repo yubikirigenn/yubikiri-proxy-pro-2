@@ -88,7 +88,12 @@
     toggle.addEventListener('pointerup', endDrag);
     toggle.addEventListener('pointercancel', endDrag);
 
-    toggle.addEventListener('click', () => {
+    // クリック判定は document に委譲する。サイト側が取得したHTMLを innerHTML
+    // 経由で差し込み直すとツールバー/トグルが複製されることがあり、表示上の
+    // 最前面の複製には個別リスナーが付かない。委譲ならどの複製でも開閉できる。
+    document.addEventListener('click', (event) => {
+      const target = event.target instanceof Element ? event.target.closest('#yubikiri-proxy-toggle') : null;
+      if (!target) return;
       if (suppressClick) { suppressClick = false; return; }
       if (isOpen()) close();
       else open();
@@ -98,7 +103,7 @@
     });
     document.addEventListener('click', (event) => {
       if (!isOpen()) return;
-      if (toolbar.contains(event.target) || toggle.contains(event.target)) return;
+      if (event.target instanceof Element && event.target.closest('#yubikiri-proxy-toolbar, #yubikiri-proxy-toggle')) return;
       close();
     });
     window.addEventListener('resize', () => { if (isOpen()) placeOpen(); else placeClosed(); });
@@ -149,8 +154,12 @@
         button.setAttribute('aria-busy', 'true');
       }
 
+      // プロキシ配下では site 側ランタイムが window.fetch を /proxy/<site> に
+      // 書き換えるため、相対 '/api/navigate' はサイト宛て(404)になる。
+      // アプリ自身のオリジンへ絶対URLで送る。アプリオリジンの /api/ は
+      // ランタイム側でも書き換え対象外。
       try {
-        const response = await window.fetch('/api/navigate', {
+        const response = await window.fetch(new URL('/api/navigate', window.location.origin).href, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ url })

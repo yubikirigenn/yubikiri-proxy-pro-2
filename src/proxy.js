@@ -244,7 +244,7 @@ const toProxy=value=>{
     const u=new URL(raw,page);
     if(!/^https?:$/.test(u.protocol))return raw;
     if(u.origin===appOrigin){
-      if(isProxyPath(u.pathname)||u.pathname.startsWith('/assets/'))return u.pathname+u.search+u.hash;
+      if(isProxyPath(u.pathname)||u.pathname.startsWith('/assets/')||u.pathname.startsWith('/api/')||u.pathname.startsWith('/internal/'))return u.pathname+u.search+u.hash;
       u.protocol=page.protocol;u.host=page.host;
     }
     repairPort(u);
@@ -575,7 +575,16 @@ function rewriteHtmlTree($, target) {
   $('[integrity]').removeAttr('integrity');
 }
 
-function rewriteHtml(source, target, token, { noLaunder = false, noRuntime = false } = {}) {
+function rewriteHtml(source, target, token, { noLaunder = false, noRuntime = false, fragment = false } = {}) {
+  // サイトJSのfetch/XHRが受け取るHTML断片。文書として包まず、URL属性だけ
+  // 書き換えて素の断片として返す。ツールバー・ランタイム・baseタグを入れると
+  // サイト側が innerHTML で挿し込む際に複製され、表示上のトグルが
+  // リスナーの無い複製に覆われて開けなくなる(実測で1→3→4個に増殖)。
+  if (fragment) {
+    const $fragment = cheerio.load(source, { decodeEntities: false }, false);
+    rewriteHtmlTree($fragment, target);
+    return $fragment.html();
+  }
   const $ = cheerio.load(source, { decodeEntities: false });
   $('base').remove();
   $('meta[http-equiv="content-security-policy" i], meta[http-equiv="content-security-policy-report-only" i]').remove();
@@ -622,8 +631,8 @@ function rewriteHtml(source, target, token, { noLaunder = false, noRuntime = fal
     head.prepend(`${baseTag}<script>${runtimeScript(target, { noLaunder })}</script>`);
   }
   if (!minimal) {
-    head.append('<link rel="stylesheet" href="/assets/proxy.css?v=11">');
-    head.append('<script src="/assets/app.js?v=11" defer></script>');
+    head.append('<link rel="stylesheet" href="/assets/proxy.css?v=12">');
+    head.append('<script src="/assets/app.js?v=12" defer></script>');
   }
   return $.html();
 }
@@ -1106,13 +1115,18 @@ async function sendResponse(upstream, res, req, target, token, sid, sidCookie) {
       // 行わず、属性書き換えとbaseタグのみで配信する。
       const isChallenge = /challenge/i.test(String(headers['cf-mitigated'] || ''))
         || /_cf_chl_opt|challenge-platform\//i.test(source);
+      // サイトJSのfetch/XHRが受け取るHTML断片にはツールバーもランタイムも
+      // 入れない。ブラウザは文書ナビゲーションで Sec-Fetch-Dest: document を、
+      // fetch/XHR/beacon では empty を送るため、それを見分ける(ヘッダーの
+      // 無い古いクライアントは従来どおり文書として扱う)。
+      const isFragment = String(req.headers['sec-fetch-dest'] || '') === 'empty';
       if (isChallenge) {
         // チャレンジが期待するページパス(cUPMDTk)とフローURL(fa)にも
         // プロキシプレフィックスを足し、locationとの整合を保つ。
         const challengePrefix = new RegExp(`(cUPMDTk:\\s*|fa:\\s*)(["'])(\\/(?!\\/)[^"']*?)\\2`, 'g');
         source = source.replace(challengePrefix, `$1$2/proxy/${token}$3$2`);
       }
-      const output = html ? rewriteHtml(source, target, token, { noLaunder: isChallenge, noRuntime: isChallenge }) : rewriteCss(source, target);
+      const output = html ? rewriteHtml(source, target, token, { noLaunder: isChallenge, noRuntime: isChallenge, fragment: isFragment }) : rewriteCss(source, target);
       const encoded = iconv.encode(output, charset);
       res.setHeader('content-type', contentType);
       res.setHeader('content-length', encoded.length);
