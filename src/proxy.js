@@ -470,6 +470,17 @@ if(adjacentDescriptor&&adjacentDescriptor.configurable&&adjacentDescriptor.value
 }
 const nativeOpen=window.open;
 window.open=function(url,...args){return nativeOpen.call(this,url?toProxy(url):url,...args)};
+if(page.hostname==='note.com'){
+  window.addEventListener('submit',event=>{
+    const form=event.target;
+    if(!(form instanceof HTMLFormElement)||!form.querySelector('input[aria-label="キーワードやクリエイターで検索"]'))return;
+    const query=form.querySelector('input').value.trim();
+    if(!query)return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    location.href=toProxy(new URL('/search?q='+encodeURIComponent(query)+'&context=note&mode=search',page).href);
+  },true);
+}
 // History entries live in app-path space (/<path>?__y=<token>) so SPA routers
 // that read location.pathname see their own route table. Full document loads
 // keep using /proxy/<token>/... via toProxy; the server accepts both forms.
