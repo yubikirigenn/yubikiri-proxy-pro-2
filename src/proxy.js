@@ -6,11 +6,16 @@ const https = require('node:https');
 const net = require('node:net');
 const crypto = require('node:crypto');
 const zlib = require('node:zlib');
-const { Transform, pipeline } = require('node:stream');
+const { Readable, Transform, pipeline } = require('node:stream');
+const { Impit } = require('impit');
 const express = require('express');
 const cheerio = require('cheerio');
 const iconv = require('iconv-lite');
 
+// キャプチャ(Cloudflare等)の判定を通すため、対象ホストだけ
+// ブラウザ相当のTLS指紋で上流に接続する。対象は限定して影響範囲を絞る。
+const IMPERSONATED_HOSTS = new Set(['poe.com', 'www.google.com', 'google.com']);
+let impersonator = null;
 const MAX_URL_LENGTH = 4096;
 const MAX_ACTIVE_REQUESTS = 48;
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -237,6 +242,7 @@ const isProxyPath=pathname=>{
     return /^https?:$/.test(origin.protocol)&&origin.origin===decoded&&tokenFor(origin.origin)===token;
   }catch{return false}
 };
+const appOwnPath=pathname=>pathname==='/api/navigate'||pathname.startsWith('/internal/agent');
 const toProxy=value=>{
   try{
     const raw=value instanceof URL?value.href:String(value);
@@ -244,7 +250,7 @@ const toProxy=value=>{
     const u=new URL(raw,page);
     if(!/^https?:$/.test(u.protocol))return raw;
     if(u.origin===appOrigin){
-      if(isProxyPath(u.pathname)||u.pathname.startsWith('/assets/')||u.pathname.startsWith('/api/')||u.pathname.startsWith('/internal/'))return u.pathname+u.search+u.hash;
+      if(isProxyPath(u.pathname)||u.pathname.startsWith('/assets/')||appOwnPath(u.pathname))return u.pathname+u.search+u.hash;
       u.protocol=page.protocol;u.host=page.host;
     }
     repairPort(u);
@@ -494,7 +500,7 @@ const toAppPage=value=>{
     // /proxy/<localhostトークン>/... というポート付きの不正トークンが履歴に
     // 積まれ、戻るでTARGET_BLOCKEDになるため、アプリ空間として正規化する。
     if(u.origin===appOrigin){
-      if(u.pathname.startsWith('/assets/')||u.pathname.startsWith('/api/')||u.pathname.startsWith('/internal/'))return u.pathname+u.search+u.hash;
+      if(u.pathname.startsWith('/assets/')||appOwnPath(u.pathname))return u.pathname+u.search+u.hash;
       if(isProxyPath(u.pathname)){
         const rest=u.pathname.slice('/proxy/'.length);
         const slash=rest.indexOf('/');
@@ -1034,6 +1040,12 @@ function createProxyRouter({ agentHub } = {}) {
         }
         return responsePromise;
       };
+      if (IMPERSONATED_HOSTS.has(target.hostname)) {
+        const body = hasBody ? await readLimited(req, MAX_UPLOAD_BYTES) : undefined;
+        remoteResponse = await impersonatedRequest(target, req.method, requestHeaders, body);
+        await sendResponse(remoteResponse, res, req, target, tokenParam, sid, sidCookie);
+        return;
+      }
       try {
         remoteResponse = await sendUpstream();
       } catch (error) {
@@ -1063,6 +1075,28 @@ function createProxyRouter({ agentHub } = {}) {
   router.all('/', handler);
   router.all('*', handler);
   return router;
+}
+
+// impitの応答を、sendResponseが読むNodeのIncomingMessageと同じ形
+// (statusCode/headers/pipe可能なストリーム)に包む。
+async function impersonatedRequest(target, method, headers, requestBody) {
+  impersonator ??= new Impit({ browser: 'chrome' });
+  const { host, 'user-agent': _userAgent, ...forwarded } = headers;
+  const response = await impersonator.fetch(target.href, {
+    method,
+    headers: forwarded,
+    body: requestBody,
+    redirect: 'manual',
+  });
+  const body = response.body ? Readable.fromWeb(response.body) : Readable.from([]);
+  const headerObject = {};
+  for (const [name, value] of response.headers) {
+    if (name === 'set-cookie' || name === 'content-encoding' || name === 'content-length') continue;
+    headerObject[name] = value;
+  }
+  const cookies = typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie() : [];
+  if (cookies.length) headerObject['set-cookie'] = cookies;
+  return Object.assign(body, { statusCode: response.status, headers: headerObject });
 }
 
 async function sendResponse(upstream, res, req, target, token, sid, sidCookie) {
@@ -1125,7 +1159,7 @@ async function sendResponse(upstream, res, req, target, token, sid, sidCookie) {
       // しないため、このページだけはURLロンダリングもランタイム注入も
       // 行わず、属性書き換えとbaseタグのみで配信する。
       const isChallenge = /challenge/i.test(String(headers['cf-mitigated'] || ''))
-        || /_cf_chl_opt|challenge-platform\//i.test(source);
+        || /_cf_chl_opt/i.test(source);
       // サイトJSのfetch/XHRが受け取るHTML断片にはツールバーもランタイムも
       // 入れない。ブラウザは文書ナビゲーションで Sec-Fetch-Dest: document を、
       // fetch/XHR/beacon では empty を送るため、それを見分ける(ヘッダーの
