@@ -105,14 +105,18 @@ async function resolvePublicAddresses(hostname) {
   } catch (error) {
     throw Object.assign(new Error('DNS lookup failed'), { code: error.code || 'DNS_LOOKUP_FAILED', publicMessage: '接続先を確認できませんでした' });
   }
-  if (!addresses.length || addresses.some((entry) => isBlockedAddress(entry.address, entry.family))) throw blockedTarget();
+  // 解決されたアドレスの一部が遮断範囲(例: CGNAT 100.64/10 の anycast)だと
+  // 全アドレスを拒否してSITE_BLOCKEDになっていた。遮断対象だけを除外し、
+  // 残った公開アドレスだけで接続する。全て遮断の場合のみ拒否する。
+  const publicAddresses = addresses.filter((entry) => !isBlockedAddress(entry.address, entry.family));
+  if (!publicAddresses.length) throw blockedTarget();
 
   if (dnsCache.size >= 256) {
     for (const [key, entry] of dnsCache) if (entry.expires <= Date.now()) dnsCache.delete(key);
     if (dnsCache.size >= 256) dnsCache.delete(dnsCache.keys().next().value);
   }
-  dnsCache.set(host, { addresses, expires: Date.now() + DNS_CACHE_MS });
-  return addresses;
+  dnsCache.set(host, { addresses: publicAddresses, expires: Date.now() + DNS_CACHE_MS });
+  return publicAddresses;
 }
 
 function blockedTarget() {
