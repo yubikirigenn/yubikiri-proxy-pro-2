@@ -153,6 +153,27 @@ function encodeProxyUrl(target) {
   return `/proxy/${originToken(target.origin)}${target.pathname}${target.search}${target.hash}`;
 }
 
+// サイトJSが実オリジンの絶対URL(https://auctions.yahoo.co.jp/...)を組み立てて
+// location遷移すると、locationはフック不能のためプロキシ外へ抜ける(ヤフオクの
+// 条件変更・検索候補など)。対象ホストに限り、JS本文・JSON応答・HTMLの<script>
+// 内テキストに出現する実オリジンを「このアプリの絶対URL」へ置き換える。
+// 相対パス(/proxy/...)で置き換えると new URL(x, base) のbaseとして使われる
+// 箇所が例外を出しページを壊すため、必ず絶対URLで置き換える(実測)。
+const ORIGIN_TEXT_REWRITE_HOSTS = new Set([
+  'auctions.yahoo.co.jp',
+  'search.yahoo.co.jp',
+  'www.yahoo.co.jp',
+  'note.com',
+]);
+const originTextPattern = (() => {
+  const alternation = [...ORIGIN_TEXT_REWRITE_HOSTS].map((host) => host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return new RegExp(`https?://(?:${alternation})(?=["'` + '`' + `\\s/);:,]|$)`, 'g');
+})();
+function rewriteOriginText(source, appOrigin) {
+  if (!appOrigin || !source.includes('://')) return source;
+  return source.replace(originTextPattern, (match) => `${appOrigin}/proxy/${originToken(`https://${match.split('://')[1]}`)}`);
+}
+
 function bingRedirectDestination(target) {
   if (target.hostname !== 'www.bing.com' || target.pathname !== '/ck/a') return null;
   const encoded = target.searchParams.get('u');
@@ -596,7 +617,18 @@ function rewriteHtmlTree($, target) {
   $('[integrity]').removeAttr('integrity');
 }
 
-function rewriteHtml(source, target, token, { noLaunder = false, noRuntime = false, fragment = false } = {}) {
+// <script>要素のテキスト(インラインJSや__NEXT_DATA__等の埋め込みJSON)に
+// 含まれる対象ホストの実オリジンを絶対プロキシURLへ置き換える。属性は
+// rewriteHtmlTree が扱うため、ここではテキストだけを触る。
+function rewriteScriptText($, appOrigin) {
+  if (!appOrigin) return;
+  $('script').each((_index, element) => {
+    const raw = $(element).html();
+    if (raw && raw.includes('://')) $(element).text(rewriteOriginText(raw, appOrigin));
+  });
+}
+
+function rewriteHtml(source, target, token, { noLaunder = false, noRuntime = false, fragment = false, appOrigin = null } = {}) {
   // サイトJSのfetch/XHRが受け取るHTML断片。文書として包まず、URL属性だけ
   // 書き換えて素の断片として返す。ツールバー・ランタイム・baseタグを入れると
   // サイト側が innerHTML で挿し込む際に複製され、表示上のトグルが
@@ -604,6 +636,7 @@ function rewriteHtml(source, target, token, { noLaunder = false, noRuntime = fal
   if (fragment) {
     const $fragment = cheerio.load(source, { decodeEntities: false }, false);
     rewriteHtmlTree($fragment, target);
+    rewriteScriptText($fragment, appOrigin);
     return $fragment.html();
   }
   const $ = cheerio.load(source, { decodeEntities: false });
@@ -623,6 +656,7 @@ function rewriteHtml(source, target, token, { noLaunder = false, noRuntime = fal
     rewriteHtmlTree(nested, target);
     $(element).text(nested.html());
   });
+  rewriteScriptText($, appOrigin);
 
   const directory = new URL('.', target).pathname;
   // Cloudflareのチャレンジページは環境の完全性を検査する。ランタイムの
@@ -1108,7 +1142,11 @@ async function sendResponse(upstream, res, req, target, token, sid, sidCookie) {
   const contentType = String(upstream.headers['content-type'] || 'application/octet-stream');
   const html = /(?:text\/html|application\/xhtml\+xml)/i.test(contentType);
   const css = /text\/css/i.test(contentType);
-  const rewrite = html || css;
+  const js = /(?:javascript|ecmascript)/i.test(contentType);
+  const json = !html && /json/i.test(contentType);
+  const rewrite = html || css || js || json;
+  // テキスト置換後のURLは絶対形式にするため、このアプリ自身のオリジンが必要。
+  const appOrigin = `${req.protocol}://${req.get('host')}`;
   const connectionTokens = String(upstream.headers.connection || '').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
   const headers = upstream.headers;
   if (headers['set-cookie'] !== undefined && sid) {
@@ -1153,7 +1191,7 @@ async function sendResponse(upstream, res, req, target, token, sid, sidCookie) {
     upstream.pause();
     const release = await withTransformSlot();
     try {
-      const limit = html ? MAX_HTML_BYTES : MAX_CSS_BYTES;
+      const limit = css ? MAX_CSS_BYTES : MAX_HTML_BYTES;
       const decoded = decodeResponse(upstream, headers['content-encoding']);
       // pipe は上流のエラーや中断を復号ストリームへ伝播しない。上流が圧縮
       // 本文の途中で切れると readLimited が永久に待ち、変換スロット(上限2)が
@@ -1188,7 +1226,9 @@ async function sendResponse(upstream, res, req, target, token, sid, sidCookie) {
         const challengePrefix = new RegExp(`(cUPMDTk:\\s*|fa:\\s*)(["'])(\\/(?!\\/)[^"']*?)\\2`, 'g');
         source = source.replace(challengePrefix, `$1$2/proxy/${token}$3$2`);
       }
-      const output = html ? rewriteHtml(source, target, token, { noLaunder: isChallenge, noRuntime: isChallenge, fragment: isFragment }) : rewriteCss(source, target);
+      const output = html
+        ? rewriteHtml(source, target, token, { noLaunder: isChallenge, noRuntime: isChallenge, fragment: isFragment, appOrigin: isChallenge ? null : appOrigin })
+        : css ? rewriteCss(source, target) : rewriteOriginText(source, appOrigin);
       const encoded = iconv.encode(output, charset);
       res.setHeader('content-type', contentType);
       res.setHeader('content-length', encoded.length);
