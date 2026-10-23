@@ -153,27 +153,6 @@ function encodeProxyUrl(target) {
   return `/proxy/${originToken(target.origin)}${target.pathname}${target.search}${target.hash}`;
 }
 
-// サイトJSが実オリジンの絶対URL(例: ヤフオクの条件変更で
-// https://auctions.yahoo.co.jp/search?... へ遷移する)は、location.href を
-// フックできないためプロキシ外へ抜ける。対象ホストに限り、配信するJS本文
-// とHTML埋め込みスクリプト内に出現する実オリジンを /proxy/<トークン> へ
-// 機械的に置き換え、遷移先をプロキシ内に留める(CroxyProxy相当のURL形)。
-// 対象は実害の出ているホストのみに絞り、他サイトのJSは一切触らない。
-const JS_ORIGIN_REWRITE_HOSTS = new Set([
-  'auctions.yahoo.co.jp',
-  'search.yahoo.co.jp',
-  'www.yahoo.co.jp',
-  'note.com',
-]);
-const jsOriginPattern = new RegExp(
-  `https?://(?:${[...JS_ORIGIN_REWRITE_HOSTS].map((host) => host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?=["'\`\\s/);:,]|$)`,
-  'g',
-);
-function rewriteJsOrigins(source) {
-  if (!source.includes('://')) return source;
-  return source.replace(jsOriginPattern, (match) => `/proxy/${originToken(`https://${match.split('://')[1]}`)}`);
-}
-
 function bingRedirectDestination(target) {
   if (target.hostname !== 'www.bing.com' || target.pathname !== '/ck/a') return null;
   const encoded = target.searchParams.get('u');
@@ -1129,8 +1108,7 @@ async function sendResponse(upstream, res, req, target, token, sid, sidCookie) {
   const contentType = String(upstream.headers['content-type'] || 'application/octet-stream');
   const html = /(?:text\/html|application\/xhtml\+xml)/i.test(contentType);
   const css = /text\/css/i.test(contentType);
-  const js = /(?:javascript|ecmascript)/i.test(contentType);
-  const rewrite = html || css || js;
+  const rewrite = html || css;
   const connectionTokens = String(upstream.headers.connection || '').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
   const headers = upstream.headers;
   if (headers['set-cookie'] !== undefined && sid) {
@@ -1175,7 +1153,7 @@ async function sendResponse(upstream, res, req, target, token, sid, sidCookie) {
     upstream.pause();
     const release = await withTransformSlot();
     try {
-      const limit = css ? MAX_CSS_BYTES : MAX_HTML_BYTES;
+      const limit = html ? MAX_HTML_BYTES : MAX_CSS_BYTES;
       const decoded = decodeResponse(upstream, headers['content-encoding']);
       // pipe は上流のエラーや中断を復号ストリームへ伝播しない。上流が圧縮
       // 本文の途中で切れると readLimited が永久に待ち、変換スロット(上限2)が
@@ -1210,10 +1188,7 @@ async function sendResponse(upstream, res, req, target, token, sid, sidCookie) {
         const challengePrefix = new RegExp(`(cUPMDTk:\\s*|fa:\\s*)(["'])(\\/(?!\\/)[^"']*?)\\2`, 'g');
         source = source.replace(challengePrefix, `$1$2/proxy/${token}$3$2`);
       }
-      // 対象ホストの実オリジンを配信JS・HTML埋め込みスクリプト内で
-      // プロキシURLへ置き換える(JS_ORIGIN_REWRITE_HOSTS 参照)。
-      source = rewriteJsOrigins(source);
-      const output = html ? rewriteHtml(source, target, token, { noLaunder: isChallenge, noRuntime: isChallenge, fragment: isFragment }) : css ? rewriteCss(source, target) : source;
+      const output = html ? rewriteHtml(source, target, token, { noLaunder: isChallenge, noRuntime: isChallenge, fragment: isFragment }) : rewriteCss(source, target);
       const encoded = iconv.encode(output, charset);
       res.setHeader('content-type', contentType);
       res.setHeader('content-length', encoded.length);
