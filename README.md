@@ -56,11 +56,14 @@
 
 PCの電源が入っている間だけ、上流への取得をメインPCの回線経由で行います。PCが停止している場合はRenderから直接取得へ自動で切り替わるため、切り替え作業は不要です。
 
-PC側の起動:
+PC側の起動(かんたん):
+
+`start-agent.cmd` をダブルクリックするだけです。初回だけ `RENDER_URL` と `AGENT_SECRET` を聞かれるので入力すると `.env` に保存され、2回目からは何も入力せず起動します。
+
+手動でコマンドを打つ場合(参考):
 
 ```
-set RENDER_URL=https://<サービス名>.onrender.com
-set AGENT_SECRET=<Renderに設定したのと同じ値>
+npm run setup-agent   # 初回のみ。対話で .env を作る
 npm run agent
 ```
 
@@ -90,19 +93,14 @@ npm run agent
 
 ### PC側のセットアップ(Windows)
 
-```
-set RENDER_URL=https://<サービス名>.onrender.com
-set AGENT_SECRET=<Renderと同じ値>
-npm run hostname-agent
-```
+`start-hostname.cmd` をダブルクリックするだけです。初回だけ `RENDER_URL` と `AGENT_SECRET` を聞かれ(パスモードのエージェントと共通の `.env` を使う)、その後ローカル中継を起動し、CAの生成を待ってから `scripts/hostname-setup.ps1` まで自動で実行します(証明書の信頼登録でWindowsの確認が出るので「はい」を選んでください)。ブラウザを再起動すると、対象ホスト(auctions.yahoo.co.jp / note.com / poe.com / google など、既定リストは `src/hostname-agent.js` の `PROXIED_HOSTS`)だけローカル経由になり、他は直接接続です。対象は `HOSTNAME_PROXY_HOSTS`(カンマ区切り)で変えられます。
 
-起動すると `~/.yubikiri-hostname/` に自己署名ルートCAが生成され、`http://127.0.0.1:8899/proxy.pac` を配信します。続けて(管理者権限は不要、セキュリティ確認は出ます):
+手動で行う場合(参考):
 
 ```
-powershell -ExecutionPolicy Bypass -File .\scripts\hostname-setup.ps1
+npm run hostname-agent          # 別ウィンドウで起動
+scripts\hostname-setup.ps1      # CA登録+プロキシ設定
 ```
-
-これでルートCAが CurrentUser の信頼ストアに入り、システムプロキシがPACへ向きます。ブラウザを再起動すると、対象ホスト(auctions.yahoo.co.jp / note.com / poe.com / google など、既定リストは `src/hostname-agent.js` の `PROXIED_HOSTS`)だけローカル経由になり、他は直接接続です。対象は `HOSTNAME_PROXY_HOSTS`(カンマ区切り)で変えられます。
 
 ### 元に戻す(完全撤去)
 

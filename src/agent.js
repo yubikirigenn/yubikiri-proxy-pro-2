@@ -15,6 +15,7 @@
 const http = require('node:http');
 const https = require('node:https');
 const { pipeline } = require('node:stream');
+require('./env').loadEnv(); // リポジトリ直下の .env(start-agent.cmd の初回セットアップで生成)
 
 const RENDER_URL = (process.env.RENDER_URL || '').replace(/\/+$/, '');
 const AGENT_SECRET = process.env.AGENT_SECRET || '';
@@ -26,9 +27,8 @@ const SERVER_TIMEOUT_MS = 35_000;
 const STREAM_IDLE_TIMEOUT_MS = 300_000;
 
 if (!RENDER_URL || !AGENT_SECRET) {
-  console.error('RENDER_URL と AGENT_SECRET を環境変数で指定してください。例:');
-  console.error('  set RENDER_URL=https://your-service.onrender.com');
-  console.error('  set AGENT_SECRET=shared-secret');
+  console.error('RENDER_URL と AGENT_SECRET が未設定です。start-agent.cmd をダブルクリックすると');
+  console.error('初回だけ対話的に聞いて .env へ保存します(コマンド: npm run setup-agent)。');
   process.exit(1);
 }
 
