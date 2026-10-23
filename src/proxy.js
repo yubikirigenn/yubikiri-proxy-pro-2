@@ -628,6 +628,20 @@ function rewriteScriptText($, appOrigin) {
   });
 }
 
+// 修正前(実オリジン未置換)のJSチャンクが上流CDNの「max-age=31536000,
+// immutable」ヘッダーでブラウザに一年キャッシュされ、修正後も古いJSで
+// 実サイトへ抜け続ける(Braveで実証)。対象サイトのページでは script src に
+// __yvb=1 を足して必ず新しく取得させる。このパラメータは上流へは送らない
+// (ハンドラで削る)。
+function bustScriptCache($, target) {
+  if (!ORIGIN_TEXT_REWRITE_HOSTS.has(target.hostname)) return;
+  $('script[src]').each((_index, element) => {
+    const src = $(element).attr('src');
+    if (!src) return;
+    $(element).attr('src', src + (src.includes('?') ? '&' : '?') + '__yvb=1');
+  });
+}
+
 function rewriteHtml(source, target, token, { noLaunder = false, noRuntime = false, fragment = false, appOrigin = null } = {}) {
   // サイトJSのfetch/XHRが受け取るHTML断片。文書として包まず、URL属性だけ
   // 書き換えて素の断片として返す。ツールバー・ランタイム・baseタグを入れると
@@ -637,6 +651,7 @@ function rewriteHtml(source, target, token, { noLaunder = false, noRuntime = fal
     const $fragment = cheerio.load(source, { decodeEntities: false }, false);
     rewriteHtmlTree($fragment, target);
     rewriteScriptText($fragment, appOrigin);
+    bustScriptCache($fragment, target);
     return $fragment.html();
   }
   const $ = cheerio.load(source, { decodeEntities: false });
@@ -657,6 +672,7 @@ function rewriteHtml(source, target, token, { noLaunder = false, noRuntime = fal
     $(element).text(nested.html());
   });
   rewriteScriptText($, appOrigin);
+  bustScriptCache($, target);
 
   const directory = new URL('.', target).pathname;
   // Cloudflareのチャレンジページは環境の完全性を検査する。ランタイムの
@@ -978,6 +994,8 @@ function createProxyRouter({ agentHub } = {}) {
       let target;
       try { target = new URL(suffix, origin); } catch { throw blockedTarget(); }
       if (target.origin !== origin.origin || target.username || target.password) throw blockedTarget();
+      // キャッシュ破壊用の細工パラメータ(bustScriptCache)は上流へ送らない。
+      target.searchParams.delete('__yvb');
       const bingDestination = bingRedirectDestination(target);
       if (bingDestination) {
         res.redirect(302, encodeProxyUrl(bingDestination));
