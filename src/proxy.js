@@ -1330,4 +1330,10 @@ async function handleWebSocketUpgrade(req, clientSocket, clientHead) {
   }
 }
 
-module.exports = { createProxyRouter, encodeProxyUrl, handleWebSocketUpgrade, validateTarget, htmlEscape, rewriteHtml, rewriteCss, sidFromCookie, cookieJars };
+// ホスト名モード(src/hostname.js)が既存の取得経路を再利用できるよう、
+// 内部部品を追加で公開する。既存のパスモードの挙動は一切変更しない。
+module.exports = {
+  createProxyRouter, encodeProxyUrl, handleWebSocketUpgrade, validateTarget, htmlEscape, rewriteHtml, rewriteCss, sidFromCookie, cookieJars,
+  resolvePublicAddresses, impersonatedRequest, dispatchToAgent, createPinnedLookup, isHopByHop, readLimited,
+  IMPERSONATED_HOSTS, upstreamHttpsAgent, upstreamHttpAgent, MAX_UPLOAD_BYTES,
+};

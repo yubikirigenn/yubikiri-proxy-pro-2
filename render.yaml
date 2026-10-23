@@ -16,3 +16,7 @@ services:
       # 未設定でもサーバーは直接取得のみで動作する。
       - key: AGENT_SECRET
         sync: false
+      # ホスト名モード(既定オフ)。有効化する場合のみ HOSTNAME_MODE=1 を設定する。
+      # 未設定なら /hostname リレーは搭載されず、既存のパスモードのみが動く。
+      # - key: HOSTNAME_MODE
+      #   value: "1"

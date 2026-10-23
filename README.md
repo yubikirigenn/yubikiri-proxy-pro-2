@@ -76,3 +76,44 @@ npm run agent
 ## Render（参考）
 
 `render.yaml` は Node Web Service の Free プランを指定しています。Free インスタンスのCPU/RAMには上限があり、大きなファイルの同時中継や常時稼働を前提とする構成ではありません。サービスの仕様変更は [Render の Free インスタンス説明](https://render.com/docs/free) と [Blueprint YAML リファレンス](https://render.com/docs/blueprint-spec) を確認してください。
+
+## ホスト名モード(任意・既定オフ)
+
+パス型ルーティングでは書き換えきれない「サイトJSが実ホストの絶対URLへ直接遷移してプロキシから抜ける」ケース(ヤフオクの条件変更、noteの検索など)に備える、オプトインの別モードです。**有効化しない限り既存の挙動は一切変わりません。**
+
+仕組み: ブラウザには実ホスト名のまま見せ、HTTPSの終端だけをPC側のローカル中継が担い、**ページ取得と応答はRenderサーバー側**で行います(書き換え・ツールバー注入はしないクリーンな透過リレー)。ブラウザは実ホスト・実クッキーのままなので絶対URL遷移が抜けません。
+
+### 有効化(サーバー)
+
+1. Render の環境変数に `HOSTNAME_MODE=1` を追加(`AGENT_SECRET` は必須)。未設定なら `/hostname` は搭載されない。
+2. 再デプロイ。ログに `[hostname] ... 有効化` が出れば搭載完了。
+
+### PC側のセットアップ(Windows)
+
+```
+set RENDER_URL=https://<サービス名>.onrender.com
+set AGENT_SECRET=<Renderと同じ値>
+npm run hostname-agent
+```
+
+起動すると `~/.yubikiri-hostname/` に自己署名ルートCAが生成され、`http://127.0.0.1:8899/proxy.pac` を配信します。続けて(管理者権限は不要、セキュリティ確認は出ます):
+
+```
+powershell -ExecutionPolicy Bypass -File .\scripts\hostname-setup.ps1
+```
+
+これでルートCAが CurrentUser の信頼ストアに入り、システムプロキシがPACへ向きます。ブラウザを再起動すると、対象ホスト(auctions.yahoo.co.jp / note.com / poe.com / google など、既定リストは `src/hostname-agent.js` の `PROXIED_HOSTS`)だけローカル経由になり、他は直接接続です。対象は `HOSTNAME_PROXY_HOSTS`(カンマ区切り)で変えられます。
+
+### 元に戻す(完全撤去)
+
+```
+powershell -ExecutionPolicy Bypass -File .\scripts\hostname-teardown.ps1
+```
+
+信頼CAの削除・システムプロキシの無効化・ローカルCAフォルダの削除まで行い、ブラウザを再起動すれば通常動作に戻ります。サーバー側は `HOSTNAME_MODE` を外して再デプロイすればリレーが降ります。コードも新ファイル(`src/hostname*.js` とスクリプト)の追加のみで、既存パス処理は変更していないため `git revert` でも撤去できます。
+
+### 注意
+
+- 導入中は当該PCのHTTPSを本中継が復号できる状態になります(自己署名ルートを信頼するため)。解除で消えます。秘密鍵はコミットしません。
+- 証明書ピン留めを使うサイト(一部決済・アプリ連携)は壊れます。対象を問題サイトだけに絞って回避してください。
+- Render単体では任意ホストのTLS終端ができないため、PC側の中継が必須です(ホスト名モードの性質上)。

@@ -6,3 +6,7 @@ npm-debug.log*
 .DS_Store
 server.log
 agent.log
+
+# ホスト名モードのローカルCA(秘密鍵・証明書)は絶対にコミットしない
+.yubikiri-hostname/
+*.key.pem
