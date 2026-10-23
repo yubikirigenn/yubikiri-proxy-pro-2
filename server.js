@@ -97,15 +97,6 @@ if (agentHub.enabled) app.use('/internal/agent', agentHub.router);
 const proxyRouter = createProxyRouter({ agentHub });
 app.use('/proxy/:origin', proxyRouter);
 
-// ホスト名モード(既定オフ)。HOSTNAME_MODE が立つときだけ、PC側のローカル
-// 中継から実ホストのまま受けた要求を透過リレーする新ルートを追加する。
-// 未設定なら既存のパスモードの挙動は一切変わらない。
-if (process.env.HOSTNAME_MODE) {
-  const { createHostnameRouter } = require('./src/hostname');
-  app.use('/hostname', createHostnameRouter({ agentHub, secret: process.env.AGENT_SECRET }));
-  console.log('[hostname] ホスト名モードのリレーを /hostname に有効化');
-}
-
 // Cloudflareのチャレンジページは環境の完全性を検査するためランタイム
 // スクリプトを注入せずに配信する。そのためチャレンジJSが送るルート相対の
 // /cdn-cgi/... リクエストはトークンを持たない。Cookieジャーからこの
