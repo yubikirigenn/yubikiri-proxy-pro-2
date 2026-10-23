@@ -1155,6 +1155,19 @@ async function sendResponse(upstream, res, req, target, token, sid, sidCookie) {
     try {
       const limit = html ? MAX_HTML_BYTES : MAX_CSS_BYTES;
       const decoded = decodeResponse(upstream, headers['content-encoding']);
+      // pipe は上流のエラーや中断を復号ストリームへ伝播しない。上流が圧縮
+      // 本文の途中で切れると readLimited が永久に待ち、変換スロット(上限2)が
+      // 解放されず、以後の全ページが固まる(実測)。上流の中断を復号側へ伝えて
+      // 確実にエラー終了させる。complete の無いストリーム(impit/エージェント
+      // 経由)には close 判定を適用しない(各経路のタイムアウトに任せる)。
+      const abortDecode = (reason) => {
+        if (!decoded.readableEnded) decoded.destroy(reason instanceof Error ? reason : new Error('UPSTREAM_ABORTED'));
+      };
+      upstream.on('error', abortDecode);
+      upstream.on('aborted', () => abortDecode(new Error('UPSTREAM_ABORTED')));
+      if (typeof upstream.complete === 'boolean') {
+        upstream.on('close', () => { if (upstream.complete === false) abortDecode(new Error('UPSTREAM_CLOSED')); });
+      }
       const body = await readLimited(decoded, limit);
       const charset = encodingFrom(contentType);
       let source = iconv.decode(body, charset);
