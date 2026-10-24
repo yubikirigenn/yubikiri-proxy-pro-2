@@ -702,8 +702,8 @@ function rewriteHtml(source, target, token, { noLaunder = false, noRuntime = fal
     head.prepend(`${baseTag}<script>${runtimeScript(target, { noLaunder })}</script>`);
   }
   if (!minimal) {
-    head.append('<link rel="stylesheet" href="/assets/proxy.css?v=12">');
-    head.append('<script src="/assets/app.js?v=12" defer></script>');
+    head.append('<link rel="stylesheet" href="/assets/proxy.css?v=13">');
+    head.append('<script src="/assets/app.js?v=13" defer></script>');
   }
   return $.html();
 }

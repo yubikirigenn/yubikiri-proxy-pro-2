@@ -137,18 +137,6 @@
       if (!url) return;
 
       if (error) error.textContent = '';
-      if (window.__YUBIKIRI_UPSTREAM_URL__) {
-        if (button) {
-          button.disabled = true;
-          button.setAttribute('aria-busy', 'true');
-        }
-        const destination = new URL('/api/navigate', window.location.origin);
-        destination.searchParams.set('url', url);
-        // Do not leave the API redirect in browser history. Otherwise Back
-        // immediately redirects to the same proxied page again.
-        window.location.replace(destination.href);
-        return;
-      }
       if (button) {
         button.disabled = true;
         button.setAttribute('aria-busy', 'true');
@@ -157,15 +145,31 @@
       // プロキシ配下では site 側ランタイムが window.fetch を /proxy/<site> に
       // 書き換えるため、相対 '/api/navigate' はサイト宛て(404)になる。
       // アプリ自身のオリジンへ絶対URLで送る。アプリオリジンの /api/ は
-      // ランタイム側でも書き換え対象外。
+      // ランタイム側でも書き換え対象外。どのページでも同じ方式(POSTして
+      // 結果の /proxy/ パスへ直接遷移)を使い、アドレスバーに
+      // /api/navigate の中間URLを出さない。
       try {
-        const response = await window.fetch(new URL('/api/navigate', window.location.origin).href, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ url })
-        });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || 'URLを確認してください');
+        let response;
+        try {
+          response = await window.fetch(new URL('/api/navigate', window.location.origin).href, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ url })
+          });
+        } catch {
+          // fetch自体が失敗した場合のみ、GETリダイレクト方式へフォールバック。
+          if (window.__YUBIKIRI_UPSTREAM_URL__) {
+            const destination = new URL('/api/navigate', window.location.origin);
+            destination.searchParams.set('url', url);
+            // Do not leave the API redirect in browser history. Otherwise Back
+            // immediately redirects to the same proxied page again.
+            window.location.replace(destination.href);
+            return;
+          }
+          throw new Error('ページを開けませんでした');
+        }
+        const result = await response.json().catch(() => null);
+        if (!response.ok || !result?.path) throw new Error(result?.error || 'URLを確認してください');
         window.location.assign(result.path);
       } catch (cause) {
         if (error) error.textContent = cause instanceof Error ? cause.message : 'ページを開けませんでした';
